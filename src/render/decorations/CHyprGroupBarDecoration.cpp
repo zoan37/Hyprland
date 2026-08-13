@@ -76,6 +76,11 @@ void CHyprGroupBarDecoration::endTabDrag() {
     if (g_tabDrag.active)
         g_pHyprRenderer->damageBox(g_tabDrag.barBox);
 
+    // The gesture is the only thing that ever takes the grab from a groupbar, so
+    // whoever holds it here is the decoration that armed this drag.
+    if (const auto GRAB = pointerGrab())
+        GRAB->ungrabPointer();
+
     g_tabDrag = STabDragState{};
 }
 
@@ -99,6 +104,10 @@ void CHyprGroupBarDecoration::armTabDrag(const Vector2D& pos, PHLWINDOW dragged)
     g_tabDrag.gapsOut   = *POUTERGAP;
     g_tabDrag.stacked   = *PSTACKED;
     g_tabDrag.armed     = true;
+
+    // From here the gesture owns the pointer: motion and the release come to this
+    // decoration even once the cursor has left the bar.
+    grabPointer();
 
     // Where inside the grabbed tab the press landed. Drawing the tab at
     // pointer - grabOffset keeps it under the same point of the cursor for the whole
@@ -614,6 +623,17 @@ bool CHyprGroupBarDecoration::onMouseButtonOnDeco(const Vector2D& pos, const IPo
     static auto POUTERGAP         = CConfigValue<Config::INTEGER>("group:groupbar:gaps_out");
     static auto PINNERGAP         = CConfigValue<Config::INTEGER>("group:groupbar:gaps_in");
     static auto PMIDDLECLICKCLOSE = CConfigValue<Config::INTEGER>("group:groupbar:middle_click_close");
+
+    // The release that ends a tab drag. It arrives here through the pointer grab, so
+    // it reaches us wherever the pointer ended up. A press that never passed the
+    // threshold was a click, not a drag, so it is not consumed and falls through to
+    // the normal handling below.
+    if (e.button == BTN_LEFT_CODE && e.state == WL_POINTER_BUTTON_STATE_RELEASED && tabDragArmed()) {
+        const bool WAS_DRAG = tabDragActive();
+        endTabDrag();
+        return WAS_DRAG;
+    }
+
     if (Fullscreen::controller()->getFullscreenModes(m_window.lock()).internal == Fullscreen::FSMODE_FULLSCREEN)
         return true;
 
@@ -688,6 +708,7 @@ bool CHyprGroupBarDecoration::onInputOnDeco(const eInputType type, const Vector2
         case INPUT_TYPE_BUTTON: return onMouseButtonOnDeco(mouseCoords, std::any_cast<const IPointer::SButtonEvent&>(data));
         case INPUT_TYPE_DRAG_START: return onBeginWindowDragOnDeco(mouseCoords);
         case INPUT_TYPE_DRAG_END: return onEndWindowDragOnDeco(mouseCoords, std::any_cast<PHLWINDOW>(data));
+        case INPUT_TYPE_MOTION: updateTabDrag(mouseCoords); return true;
         default: return false;
     }
 }

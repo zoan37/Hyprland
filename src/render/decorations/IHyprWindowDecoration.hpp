@@ -32,7 +32,7 @@ class CDecorationPositioner;
 class IHyprWindowDecoration {
   public:
     IHyprWindowDecoration(PHLWINDOW);
-    virtual ~IHyprWindowDecoration() = default;
+    virtual ~IHyprWindowDecoration();
 
     virtual SDecorationPositioningInfo getPositioningInfo() = 0;
 
@@ -53,6 +53,24 @@ class IHyprWindowDecoration {
     virtual uint64_t                   getDecorationFlags();
 
     virtual std::string                getDisplayName();
+
+    // Pointer grab.
+    //
+    // checkInputOnDecos only delivers to decorations whose box contains the cursor,
+    // which is right for clicks and wrong for gestures: a drag that begins on a
+    // decoration has to keep receiving motion after the pointer has left it, and has
+    // to see the release wherever it happens. A decoration that claims a press takes
+    // the grab, and from then until it releases it receives INPUT_TYPE_MOTION and the
+    // matching button release regardless of where the pointer is.
+    //
+    // Only one grab exists at a time, because the pointer is a singleton. The grab is
+    // dropped automatically if the holding decoration is destroyed, which a window
+    // closing mid-gesture would otherwise turn into a dangling pointer.
+    void                          grabPointer();
+    void                          ungrabPointer();
+    bool                          hasPointerGrab() const;
+
+    static IHyprWindowDecoration* pointerGrab();
 
   private:
     PHLWINDOWREF m_window;
