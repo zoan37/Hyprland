@@ -26,7 +26,7 @@ static SP<ITexture> m_tGradientLockedInactive;
 constexpr int       BAR_TEXT_PAD = 2;
 
 // linux/input-event-codes.h BTN_LEFT; the middle-click path above uses 274 (BTN_MIDDLE) the same way
-constexpr uint32_t  BTN_LEFT_CODE = 272;
+constexpr uint32_t BTN_LEFT_CODE = 272;
 
 // --- modifier-free tab dragging ------------------------------------------------
 // See the comment on the static members in the header. The geometry is a snapshot
@@ -36,21 +36,21 @@ constexpr uint32_t  BTN_LEFT_CODE = 272;
 
 namespace {
     struct STabDragState {
-        PHLWINDOWREF window;      // the tab being dragged
-        Vector2D     pressPos;    // where the press landed, for the threshold
-        CBox         barBox;      // the bar, in global coords
-        Vector2D     pointer;     // latest pointer position, for drawing the tab under it
+        PHLWINDOWREF window;         // the tab being dragged
+        Vector2D     pressPos;       // where the press landed, for the threshold
+        CBox         barBox;         // the bar, in global coords
+        Vector2D     pointer;        // latest pointer position, for drawing the tab under it
         double       grabOffset = 0; // where inside the tab the press landed, so it does not jump
-        float        barWidth  = 0;
-        float        barHeight = 0;
-        int          gapsIn    = 0;
-        int          gapsOut   = 0;
-        bool         stacked   = false;
-        bool         armed     = false;
-        bool         active    = false;
+        float        barWidth   = 0;
+        float        barHeight  = 0;
+        int          gapsIn     = 0;
+        int          gapsOut    = 0;
+        bool         stacked    = false;
+        bool         armed      = false;
+        bool         active     = false;
     };
 
-    STabDragState    g_tabDrag;
+    STabDragState g_tabDrag;
 
     // Enough to not reorder on the jitter of an ordinary click, small enough that a
     // deliberate drag feels immediate.
@@ -80,10 +80,10 @@ void CHyprGroupBarDecoration::endTabDrag() {
 }
 
 void CHyprGroupBarDecoration::armTabDrag(const Vector2D& pos, PHLWINDOW dragged) {
-    static auto PSTACKED   = CConfigValue<Config::INTEGER>("group:groupbar:stacked");
-    static auto POUTERGAP  = CConfigValue<Config::INTEGER>("group:groupbar:gaps_out");
-    static auto PINNERGAP  = CConfigValue<Config::INTEGER>("group:groupbar:gaps_in");
-    static auto PDRAGTABS  = CConfigValue<Config::INTEGER>("group:groupbar:drag_tabs");
+    static auto PSTACKED  = CConfigValue<Config::INTEGER>("group:groupbar:stacked");
+    static auto POUTERGAP = CConfigValue<Config::INTEGER>("group:groupbar:gaps_out");
+    static auto PINNERGAP = CConfigValue<Config::INTEGER>("group:groupbar:gaps_in");
+    static auto PDRAGTABS = CConfigValue<Config::INTEGER>("group:groupbar:drag_tabs");
 
     if (!*PDRAGTABS || !dragged || !dragged->m_group || dragged->m_group->size() < 2)
         return;
@@ -325,14 +325,14 @@ void CHyprGroupBarDecoration::draw(PHLMONITOR pMonitor, float const& a) {
         // A tab being dragged is drawn wherever the cursor is rather than in its
         // slot, so it slides with the pointer while the others hold their places.
         // Only the drawing offset changes; the slot arithmetic below is untouched.
-        float      xoffDraw = xoff;
-        double     dragAlong;
+        float  xoffDraw = xoff;
+        double dragAlong;
         if (draggedTabAlong(m_dwGroupMembers[WINDOWINDEX].lock(), ASSIGNEDBOX.w, m_barWidth, dragAlong))
             xoffDraw = dragAlong;
 
-        CBox       rect = {ASSIGNEDBOX.x + xoffDraw - pMonitor->m_position.x + m_window->m_floatingOffset.x,
-                           ASSIGNEDBOX.y + ASSIGNEDBOX.h - floor(yoff) - *PINDICATORHEIGHT - *POUTERGAP - pMonitor->m_position.y + m_window->m_floatingOffset.y, m_barWidth,
-                           *PINDICATORHEIGHT};
+        CBox rect = {ASSIGNEDBOX.x + xoffDraw - pMonitor->m_position.x + m_window->m_floatingOffset.x,
+                     ASSIGNEDBOX.y + ASSIGNEDBOX.h - floor(yoff) - *PINDICATORHEIGHT - *POUTERGAP - pMonitor->m_position.y + m_window->m_floatingOffset.y, m_barWidth,
+                     *PINDICATORHEIGHT};
 
         rect.scale(pMonitor->m_scale).round();
 
