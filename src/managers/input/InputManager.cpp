@@ -756,8 +756,14 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, st
 void CInputManager::onMouseButton(IPointer::SButtonEvent e, SP<IPointer> mouse) {
     Event::SCallbackInfo info;
     Event::bus()->m_events.input.mouse.button.emit(e, info);
-    if (info.cancelled)
+    if (info.cancelled) {
+        // The button is physically up whether or not a plugin swallowed the event, so
+        // a decoration waiting on this release would otherwise keep running forever.
+        if (const auto GRAB = IHyprWindowDecoration::pointerGrab(); GRAB && e.state == WL_POINTER_BUTTON_STATE_RELEASED && e.button == GRAB->pointerGrabButton())
+            IHyprWindowDecoration::cancelPointerGrab();
+
         return;
+    }
 
     if (e.mouse)
         recheckMouseWarpOnMouseInput();

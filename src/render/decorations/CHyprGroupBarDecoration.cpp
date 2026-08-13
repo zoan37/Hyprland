@@ -334,18 +334,36 @@ void CHyprGroupBarDecoration::draw(PHLMONITOR pMonitor, float const& a) {
     if (DESIREDHEIGHT != ASSIGNEDBOX.h)
         g_pDecorationPositioner->repositionDeco(this);
 
-    float xoff = 0;
-    float yoff = 0;
+    bool blur = *PBLUR != 0;
 
-    bool  blur = *PBLUR != 0;
-
+    // Slot order, except that the tab being dragged is drawn last so it stays on top
+    // of the ones it slides past instead of disappearing behind them.
+    std::vector<int> drawOrder;
+    drawOrder.reserve(barsToDraw);
+    int dragged = -1;
     for (int i = 0; i < barsToDraw; ++i) {
         const auto WINDOWINDEX = *PSTACKED ? m_dwGroupMembers.size() - i - 1 : i;
+        double     dragAlong;
+        if (draggedTabAlong(m_dwGroupMembers[WINDOWINDEX].lock(), ASSIGNEDBOX.w, m_barWidth, dragAlong))
+            dragged = i;
+        else
+            drawOrder.emplace_back(i);
+    }
+
+    if (dragged >= 0)
+        drawOrder.emplace_back(dragged);
+
+    for (const auto& i : drawOrder) {
+        const auto WINDOWINDEX = *PSTACKED ? m_dwGroupMembers.size() - i - 1 : i;
+
+        // Offsets come from the slot index rather than accumulating across the loop,
+        // because the loop no longer runs in slot order.
+        const float yoff = *PSTACKED ? i * ONEBARHEIGHT : 0;
 
         // A tab being dragged is drawn wherever the cursor is rather than in its
         // slot, so it slides with the pointer while the others hold their places.
-        // Only the drawing offset changes; the slot arithmetic below is untouched.
-        float  xoffDraw = xoff;
+        // Only the drawing offset changes; the slot arithmetic is untouched.
+        float  xoffDraw = *PSTACKED ? 0 : i * (*PINNERGAP + m_barWidth);
         double dragAlong;
         if (draggedTabAlong(m_dwGroupMembers[WINDOWINDEX].lock(), ASSIGNEDBOX.w, m_barWidth, dragAlong))
             xoffDraw = dragAlong;
@@ -454,11 +472,6 @@ void CHyprGroupBarDecoration::draw(PHLMONITOR pMonitor, float const& a) {
                 g_pHyprRenderer->addPassElement(makeUnique<CTexPassElement>(std::move(data)));
             }
         }
-
-        if (*PSTACKED)
-            yoff += ONEBARHEIGHT;
-        else
-            xoff += *PINNERGAP + m_barWidth;
     }
 
     if (*PRENDERTITLES)
