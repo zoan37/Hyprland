@@ -343,7 +343,7 @@ void CHyprGroupBarDecoration::draw(PHLMONITOR pMonitor, float const& a) {
     int dragged = -1;
     for (int i = 0; i < barsToDraw; ++i) {
         const auto WINDOWINDEX = *PSTACKED ? m_dwGroupMembers.size() - i - 1 : i;
-        double     dragAlong;
+        double     dragAlong   = 0;
         if (draggedTabAlong(m_dwGroupMembers[WINDOWINDEX].lock(), ASSIGNEDBOX.w, m_barWidth, dragAlong))
             dragged = i;
         else
@@ -363,8 +363,8 @@ void CHyprGroupBarDecoration::draw(PHLMONITOR pMonitor, float const& a) {
         // A tab being dragged is drawn wherever the cursor is rather than in its
         // slot, so it slides with the pointer while the others hold their places.
         // Only the drawing offset changes; the slot arithmetic is untouched.
-        float  xoffDraw = *PSTACKED ? 0 : i * (*PINNERGAP + m_barWidth);
-        double dragAlong;
+        float  xoffDraw  = *PSTACKED ? 0 : i * (*PINNERGAP + m_barWidth);
+        double dragAlong = 0;
         if (draggedTabAlong(m_dwGroupMembers[WINDOWINDEX].lock(), ASSIGNEDBOX.w, m_barWidth, dragAlong))
             xoffDraw = dragAlong;
 

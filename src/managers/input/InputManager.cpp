@@ -279,8 +279,13 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, st
     // for gestures too, and only for real pointer motion: touch sends its position
     // here as an overridePos, and a tap across the screen must not drive a drag the
     // mouse never made.
-    if (!overridePos.has_value()) {
-        if (const auto GRAB = IHyprWindowDecoration::pointerGrab())
+    if (const auto GRAB = IHyprWindowDecoration::pointerGrab(); GRAB && !overridePos.has_value()) {
+        // Decoration input is gated on the session lock everywhere else, and a
+        // gesture must not keep running underneath a lock screen. End it rather than
+        // merely pausing it: by the time the session unlocks the button is long gone.
+        if (g_pSessionLockManager->isSessionLocked())
+            IHyprWindowDecoration::cancelPointerGrab();
+        else
             GRAB->onInputOnDeco(INPUT_TYPE_MOTION, mouseCoords);
     }
 
@@ -855,6 +860,10 @@ eClickBehaviorMode CInputManager::getClickMode() {
 }
 
 void CInputManager::setClickMode(eClickBehaviorMode mode) {
+    // Button events are about to be routed by click mode, and only the normal path
+    // hands a release to the grab holder. Anything mid-gesture ends here.
+    IHyprWindowDecoration::cancelPointerGrab();
+
     switch (mode) {
         case CLICKMODE_DEFAULT:
             Log::logger->log(Log::DEBUG, "SetClickMode: DEFAULT");
