@@ -54,6 +54,7 @@ class CHyprGroupBarDecoration : public IHyprWindowDecoration {
     // slides continuously instead of jumping a slot at a time. Fills `outAlong` with
     // its position along the bar, measured from the bar's origin, and returns false
     // for every tab that is not the one being dragged.
+    static void tabMetrics(const CBox& barBox, size_t count, double& outTabLen, double& outStep);
     static bool draggedTabAlong(PHLWINDOW w, const CBox& barBox, double tabLen, double& outAlong);
 
   private:

@@ -67,11 +67,17 @@ bool CHyprGroupBarDecoration::tabDragActive() {
 }
 
 void CHyprGroupBarDecoration::endTabDrag() {
-
     // Release only a grab a groupbar holds: this is static state shared by every
     // groupbar, and some other decoration's gesture is not ours to cancel.
-    if (const auto GRAB = pointerGrab(); GRAB && GRAB->getDecorationType() == DECORATION_GROUPBAR)
+    if (const auto GRAB = pointerGrab(); GRAB && GRAB->getDecorationType() == DECORATION_GROUPBAR) {
+        // The tab snaps back into its slot here, so the bar has to be repainted. If
+        // the pointer sat still for the last frame nothing else would schedule it and
+        // the tab would stay drawn where it was dropped.
+        if (g_tabDrag.active)
+            GRAB->damageEntire();
+
         GRAB->ungrabPointer();
+    }
 
     g_tabDrag = STabDragState{};
 }
@@ -124,11 +130,36 @@ void CHyprGroupBarDecoration::armTabDrag(const Vector2D& pos, PHLWINDOW dragged)
     // Where inside the grabbed tab the press landed. Drawing the tab at
     // pointer - grabOffset keeps it under the same point of the cursor for the whole
     // gesture, instead of snapping its edge to the pointer on the first motion.
-    const auto   BARBOX   = assignedBoxGlobal();
-    const double STEP     = *PSTACKED ? m_barHeight + *POUTERGAP : m_barWidth + *PINNERGAP;
+    const auto BARBOX = assignedBoxGlobal();
+    double     tabLen = 0, STEP = 0;
+    tabMetrics(BARBOX, dragged->m_group->size(), tabLen, STEP);
     const double RELATIVE = *PSTACKED ? pos.y - BARBOX.y : pos.x - BARBOX.x;
     if (STEP > 0 && RELATIVE >= 0)
         g_tabDrag.grabOffset = RELATIVE - sc<int>(RELATIVE / STEP) * STEP;
+}
+
+// Tab size and slot pitch, from the bar box and member count rather than from
+// whatever the last draw() left behind: a gesture can begin and move before the next
+// frame, and the count can change under it.
+void CHyprGroupBarDecoration::tabMetrics(const CBox& barBox, size_t count, double& outTabLen, double& outStep) {
+    static auto PSTACKED      = CConfigValue<Config::INTEGER>("group:groupbar:stacked");
+    static auto POUTERGAP     = CConfigValue<Config::INTEGER>("group:groupbar:gaps_out");
+    static auto PINNERGAP     = CConfigValue<Config::INTEGER>("group:groupbar:gaps_in");
+    static auto PKEEPUPPERGAP = CConfigValue<Config::INTEGER>("group:groupbar:keep_upper_gap");
+
+    if (count < 1) {
+        outTabLen = 0;
+        outStep   = 0;
+        return;
+    }
+
+    if (*PSTACKED) {
+        outTabLen = ((barBox.h - *POUTERGAP * *PKEEPUPPERGAP) - *POUTERGAP * count) / count;
+        outStep   = outTabLen + *POUTERGAP;
+    } else {
+        outTabLen = (barBox.w - *PINNERGAP * (count - 1)) / count;
+        outStep   = outTabLen + *PINNERGAP;
+    }
 }
 
 bool CHyprGroupBarDecoration::draggedTabAlong(PHLWINDOW w, const CBox& barBox, double tabLen, double& outAlong) {
@@ -186,7 +217,8 @@ void CHyprGroupBarDecoration::updateTabDrag(const Vector2D& pos) {
 
     // Which slot the cursor is over. Same geometry the press and drop paths use,
     // just evaluated continuously instead of once.
-    const double STEP = *PSTACKED ? m_barHeight + *POUTERGAP : m_barWidth + *PINNERGAP;
+    double tabLen = 0, STEP = 0;
+    tabMetrics(BARBOX, SIZE, tabLen, STEP);
     if (STEP <= 0)
         return;
 

@@ -155,8 +155,13 @@ void CInputManager::onMouseMoved(IPointer::SMotionEvent e) {
         PROTO::relativePointer->sendRelativeMotion(sc<uint64_t>(e.timeMs) * 1000, delta, unaccel);
     Pointer::mgr()->move(DELTA);
 
-    if (PROTO::inputCapture->isCaptured())
+    if (PROTO::inputCapture->isCaptured()) {
+        // Capture can begin mid-motion, and this returns before the grab would be
+        // told anything. Left alone, the gesture would resume the moment capture
+        // ended — possibly long after the button was let go.
+        IHyprWindowDecoration::cancelPointerGrab();
         return;
+    }
 
     mouseMoveUnified(e.timeMs, false, e.mouse);
 
