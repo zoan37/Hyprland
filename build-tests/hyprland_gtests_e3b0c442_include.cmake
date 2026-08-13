@@ -1,5 +1,0 @@
-if(EXISTS "/home/zoan/Projects/Hyprland/build-tests/hyprland_gtests_e3b0c442_tests.cmake")
-  include("/home/zoan/Projects/Hyprland/build-tests/hyprland_gtests_e3b0c442_tests.cmake")
-else()
-  add_test(hyprland_gtests_NOT_BUILT hyprland_gtests_NOT_BUILT)
-endif()
