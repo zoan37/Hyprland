@@ -1,121 +1,133 @@
 # Native groupbar tab dragging
 
-Working notes for the `tab-drag-native` branch, based on `v0.56.0`.
+Notes for the `tab-drag-native` branch, based on `v0.56.0`.
 
-## The problem with the current behaviour
+## The problem
 
-Dragging a groupbar tab is implemented as *dragging the window*:
+Dragging a groupbar tab was implemented as *dragging the window*:
 
 `CHyprGroupBarDecoration::onBeginWindowDragOnDeco()`
-(`src/render/decorations/CHyprGroupBarDecoration.cpp`)
 
 1. works out which tab was grabbed from the cursor x,
 2. `GROUP->remove(pWindow)` — tears it out of the group immediately,
 3. `dragController()->dragBegin(..., MBIND_MOVE)` — starts a normal window drag.
 
-So the moment you touch a tab, the window leaves the group, gets floated at
-84.89% of its tiled size, and follows the cursor. Consequences:
+So touching a tab made the window leave the group, float at 84.89% of its tiled
+size, and follow the cursor. It also required holding SUPER, because that path is
+only reachable from the `movewindow` mouse bind. Consequences:
 
-- the dragged window covers the groupbar you are aiming at, so the drop
-  position has to be guessed;
-- the group relayouts twice (on tear-out and on drop) for what should be a
-  reordering of a list;
-- there is no feedback about where the tab will land, because the bar is
-  hidden behind the window that left it;
-- on `v0.56.0` the drop ignores position entirely and re-inserts after the
-  active tab (`group:insert_after_current`). Upstream `9f777b13` makes the
-  drop positional, but that only helps if you can see the bar.
+- the dragged window covers the groupbar you are aiming at;
+- the group relayouts twice for what should be a reordering of a list;
+- no feedback about where the tab will land;
+- on `v0.56.0` the drop ignores position entirely and re-inserts after the active
+  tab (`group:insert_after_current`).
 
-None of this is what a tab drag should be. **Dragging a tab is not dragging a
-window.** Chrome models these as two different gestures, and the tear-off only
-happens when the pointer leaves the tab strip.
+**Dragging a tab is not dragging a window.** Chrome models them as two gestures,
+and the tear-off happens only when the pointer leaves the strip.
 
-## Target behaviour
+## What this branch does
 
-Follow the Chrome model:
+Modifier-free tab dragging, in the spirit of `general:resize_on_border`: press a
+tab and drag it along the bar, no keybind. The window never leaves the group and
+never floats — the group's order is permuted as the pointer crosses tab
+boundaries, so the tab visibly travels with the cursor and the reordering is its
+own feedback. No separate insertion indicator is needed.
 
-- **Inside the bar** — the window never leaves the group and never floats.
-  The tab order updates live as the cursor crosses the midpoint of a
-  neighbouring tab. Releasing just ends the gesture. Because the bar redraws
-  with the new order, the reordering *is* the feedback; no separate insertion
-  indicator is needed.
-- **Leaving the bar** — once the cursor moves outside the bar's band by more
-  than a threshold, fall back to today's behaviour: remove from the group and
-  hand off to a real window drag. That is the tear-off, and it is the only
-  case where the window should float.
+Gated by **`group:groupbar:drag_tabs`** (bool, default true).
 
-## Hooks that already exist
+### Why the entry point is the button path, not the drag path
 
-Verified against `v0.56.0`:
+`INPUT_TYPE_DRAG_START` only fires from `CKeybindManager::changeMouseBindMode`,
+i.e. from a mouse *bind*, which by definition needs a modifier. Plain presses
+already reach decorations through `CInputManager::processMouseDownNormal` →
+`checkInputOnDecos(INPUT_TYPE_BUTTON, ...)` — that is how click-to-focus-a-tab
+works today, and it is the same path `resize_on_border` uses. So the gesture is
+armed from `onMouseButtonOnDeco` instead.
 
-- **Claiming the gesture.** `CKeybindManager::changeMouseBindMode()`
-  (`src/managers/KeybindManager.cpp:961`) calls
-  `checkInputOnDecos(INPUT_TYPE_DRAG_START, ...)` and, if the decoration
-  returns `true`, returns early **without** calling `beginDragTarget()`. So a
-  decoration can already take a drag over from the window-drag machinery.
-  Today the groupbar returns `true` and then starts a window drag itself;
-  it can just as well start a tab drag instead.
-- **Release.** Button events already reach decorations —
-  `src/managers/input/InputManager.cpp:872` dispatches `INPUT_TYPE_BUTTON`,
-  which the groupbar handles in `onMouseButtonOnDeco()`. The release edge of
-  that event is the natural end of the gesture.
-- **Reordering.** `CGroup` (`src/desktop/view/Group.hpp`) exposes
-  `moveCurrent(bool next)`, `swapWithNext()`, `fromIndex(size_t)`, `size()`
-  and holds the order in `m_windows`.
-- **Hit geometry.** `onBeginWindowDragOnDeco()` already contains the maths for
-  turning a cursor position into a tab index, for both horizontal and
-  `groupbar:stacked` bars. Reuse it rather than reinventing it.
+This leaves the existing SUPER+drag tear-out untouched: when a mouse bind
+consumes the press, `processMouseDownNormal` returns before reaching the
+decoration, so the two gestures cannot both arm.
 
-## The missing piece
+### Shape
 
-`INPUT_TYPE_MOTION` exists in `eInputType` (`src/SharedDefs.hpp:38`) but is
-**never dispatched** — nothing in `src/` passes it to `checkInputOnDecos`. It
-is a stub. Live reordering needs pointer motion to reach the decoration, so
-this branch has to add that dispatch in the pointer-motion path in
-`CInputManager` (alongside the existing `INPUT_TYPE_BUTTON` and
-`INPUT_TYPE_AXIS` sites), then handle it in
-`CHyprGroupBarDecoration::onInputOnDeco()`, which currently falls through to
-`default: return false`.
+- **State** is static (`g_tabDrag` in the .cpp). The pointer is a singleton, so at
+  most one tab can be dragged at a time. The bar geometry is *snapshotted* on
+  press — reordering permutes tabs within the bar but never moves the bar — so no
+  pointer to a decoration has to outlive the gesture. A window in the group
+  closing mid-drag would otherwise be a use-after-free; instead the weak window
+  ref simply expires and the gesture is dropped.
+- **Arming** happens on left press over a tab (not padding), when
+  `drag_tabs` is on and the group has more than one member. Nothing moves yet.
+- **Motion** arrives via a new call in `CInputManager::mouseMoveUnified`, guarded
+  by a static `tabDragArmed()` check so the common case costs one branch on the
+  hottest path in the compositor. Past `TAB_DRAG_THRESHOLD` (4px) the gesture
+  becomes a drag; below it, it stays a click.
+- **Reordering** reuses `CGroup::swapWithNext/swapWithLast`, the same primitives
+  behind the `movegroupwindow` dispatcher, stepping one slot at a time toward the
+  hovered index. They move whichever window is *current* and follow it, so the
+  dragged tab is made current first (the press already does this).
+- **Off-axis band.** Straying further than `TAB_DRAG_BAND` (3×) the bar's
+  thickness pauses the gesture rather than ending it — coming back resumes, and
+  nothing is reverted. Without this, pressing a tab and moving down into the
+  window would keep reordering on the horizontal component alone.
+- **Release** is handled in `processMouseDownNormal` rather than in the
+  decoration, because by then the pointer may have left the bar and the
+  decoration would never see the event. A release that ended a real drag is
+  swallowed; a release that was only ever a click falls through.
 
-Adding the dispatch is a change other decorations can benefit from, and is
-plausibly upstreamable on its own.
+### Files
 
-## Sketch
+| file | change |
+| --- | --- |
+| `src/render/decorations/CHyprGroupBarDecoration.hpp` | static gesture API, `armTabDrag` |
+| `src/render/decorations/CHyprGroupBarDecoration.cpp` | state, arm/update/end, press hook |
+| `src/managers/input/InputManager.cpp` | motion hook, release hook |
+| `src/config/values/ConfigValues.cpp` | `group:groupbar:drag_tabs` |
 
-State on `CHyprGroupBarDecoration`:
+## Verification
+
+Compile-clean, and `--verify-config` accepts an existing hyprlang config (this
+branch is on `v0.56.0`, which still ships `src/config/legacy/`; note that
+upstream `main` has removed legacy config support in `a9902ea6`, so a `main`-based
+build cannot read a hyprlang config at all).
+
+Behaviour was tested end to end against a nested Hyprland running this build,
+driven by a real pointer through `zwlr_virtual_pointer_v1` — so events traverse
+the compositor's normal input pipeline exactly as a physical mouse would. Three
+windows were grouped and the group order read back over IPC after each gesture:
 
 ```
-struct {
-    bool   active     = false;
-    size_t index      = 0;   // tab currently being dragged
-    double grabOffset = 0;   // cursor offset within that tab, to avoid jumping
-} m_tabDrag;
+PASS  drag tab[0] -> slot 2 moves it to the end
+PASS  drag tab[2] -> slot 0 moves it to the front
+PASS  drag tab[0] -> slot 1 swaps the first two
+PASS  plain click does not reorder
+PASS  sub-threshold jitter does not reorder
+PASS  leaving the bar band pauses reordering
+PASS  drag_tabs = false disables dragging
+PASS  drag_tabs = true re-enables it
+
+8 passed, 0 failed
 ```
 
-- `onBeginWindowDragOnDeco(pos)` — if the group has more than one member,
-  record `m_tabDrag` and return `true`. Do **not** remove from the group, do
-  **not** call `dragBegin`.
-- `onMotion(pos)` (new) — if `m_tabDrag.active`:
-  - if the cursor is still within the bar band: compute the hovered index; if
-    it differs from `m_tabDrag.index`, reorder `m_windows` and damage the
-    decoration, then update `m_tabDrag.index`;
-  - if it has left the band by more than a threshold: end the tab drag,
-    `GROUP->remove()` and `dragBegin(MBIND_MOVE)` — the existing tear-off.
-- `onMouseButtonOnDeco()` — on release with `m_tabDrag.active`, clear it.
+The harness (a small `zwlr_virtual_pointer_v1` client plus a driver script) lives
+outside this tree. Porting it to `hyprtester` would be the right move before any
+upstream submission; that harness can already synthesise clicks via
+`hl.plugin.test.click`, but its group tests depend on `kitty`.
 
-Order of work:
+## Not done
 
-1. dispatch `INPUT_TYPE_MOTION` and prove it arrives (log it);
-2. live reorder inside the bar;
-3. tear-off threshold;
-4. optional polish: render the grabbed tab following the cursor rather than
-   only reordering underneath it. Chrome does this; reordering alone may
-   already feel right.
+- **Tear-off.** Dragging a tab off the bar does not detach the window into a
+  floating drag the way Chrome does; the gesture just pauses. Tear-off still
+  works the old way, with SUPER+drag, which this branch leaves alone.
+- **Smooth motion.** The tab jumps a slot at a time rather than sliding under the
+  cursor with the others parting around it.
+- **Stacked bars** (`groupbar:stacked`) are handled in the arithmetic — the
+  off-axis and along-axis roles swap — but were not tested.
 
 ## Relationship to the other branch
 
-`groupbar-tab-drag-0.56` holds two commits: the cherry-picked upstream
-positional-drop fix and `binds:drag_scale`. Neither is needed for this design
-— if the window never floats, there is nothing to shrink, and the drop
-position is decided continuously rather than on release. `drag_scale` remains
-worth keeping as an independent change for ordinary window drags.
+`groupbar-tab-drag-0.56` holds the cherry-picked upstream positional-drop fix and
+`binds:drag_scale`. Neither is needed here: if the window never floats there is
+nothing to shrink, and the position is decided continuously rather than on
+release. `drag_scale` remains worth keeping as an independent change for ordinary
+window drags.

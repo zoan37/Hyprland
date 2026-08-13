@@ -449,6 +449,7 @@ std::vector<SP<IValue>> Values::getConfigValues() {
         MS<Bool>("group:groupbar:render_titles", "whether to render titles in the group bar decoration", true),
         MS<Bool>("group:groupbar:scrolling", "whether scrolling in the groupbar changes group active window", true),
         MS<Bool>("group:groupbar:middle_click_close", "whether middle clicking the groupbar closes the clicked window", true),
+        MS<Bool>("group:groupbar:drag_tabs", "whether a tab can be dragged along the groupbar with the left mouse button to reorder the group, without a modifier", true),
         MS<Int>("group:groupbar:rounding", "how much to round the groupbar", 1, {.min = 0, .max = 20}),
         MS<Float>("group:groupbar:rounding_power", "rounding power of groupbar corners (2 is a circle)", 2, {.min = 2, .max = 10}),
         MS<Int>("group:groupbar:gradient_rounding", "how much to round the groupbar gradient", 2, {.min = 0, .max = 20}),

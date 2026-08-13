@@ -4,6 +4,7 @@
 #include "../../desktop/state/FocusState.hpp"
 #include "../../desktop/state/WindowState.hpp"
 #include "../../desktop/view/Group.hpp"
+#include <algorithm>
 #include <ranges>
 #include <pango/pangocairo.h>
 #include "../pass/TexPassElement.hpp"
@@ -23,6 +24,145 @@ static SP<ITexture> m_tGradientLockedActive;
 static SP<ITexture> m_tGradientLockedInactive;
 
 constexpr int       BAR_TEXT_PAD = 2;
+
+// linux/input-event-codes.h BTN_LEFT; the middle-click path above uses 274 (BTN_MIDDLE) the same way
+constexpr uint32_t  BTN_LEFT_CODE = 272;
+
+// --- modifier-free tab dragging ------------------------------------------------
+// See the comment on the static members in the header. The geometry is a snapshot
+// taken on press: reordering swaps tabs within the bar but never moves the bar
+// itself, so the snapshot stays valid for the whole gesture and the handlers below
+// need no access to any decoration instance.
+
+namespace {
+    struct STabDragState {
+        PHLWINDOWREF window;      // the tab being dragged
+        Vector2D     pressPos;    // where the press landed, for the threshold
+        CBox         barBox;      // the bar, in global coords
+        float        barWidth  = 0;
+        float        barHeight = 0;
+        int          gapsIn    = 0;
+        int          gapsOut   = 0;
+        bool         stacked   = false;
+        bool         armed     = false;
+        bool         active    = false;
+    };
+
+    STabDragState    g_tabDrag;
+
+    // Enough to not reorder on the jitter of an ordinary click, small enough that a
+    // deliberate drag feels immediate.
+    constexpr double TAB_DRAG_THRESHOLD = 4.0;
+
+    // How far off the bar, as a multiple of its thickness, the pointer may stray and
+    // still reorder. Without this, pressing a tab and moving down into the window
+    // would keep reordering on the horizontal component alone, which is a surprising
+    // way to lose your tab order. Straying past the band only pauses the gesture —
+    // coming back resumes it, and nothing is reverted.
+    constexpr double TAB_DRAG_BAND = 3.0;
+}
+
+bool CHyprGroupBarDecoration::tabDragArmed() {
+    return g_tabDrag.armed && !g_tabDrag.window.expired();
+}
+
+bool CHyprGroupBarDecoration::tabDragActive() {
+    return tabDragArmed() && g_tabDrag.active;
+}
+
+void CHyprGroupBarDecoration::endTabDrag() {
+    if (g_tabDrag.active)
+        g_pHyprRenderer->damageBox(g_tabDrag.barBox);
+
+    g_tabDrag = STabDragState{};
+}
+
+void CHyprGroupBarDecoration::armTabDrag(const Vector2D& pos, PHLWINDOW dragged) {
+    static auto PSTACKED   = CConfigValue<Config::INTEGER>("group:groupbar:stacked");
+    static auto POUTERGAP  = CConfigValue<Config::INTEGER>("group:groupbar:gaps_out");
+    static auto PINNERGAP  = CConfigValue<Config::INTEGER>("group:groupbar:gaps_in");
+    static auto PDRAGTABS  = CConfigValue<Config::INTEGER>("group:groupbar:drag_tabs");
+
+    if (!*PDRAGTABS || !dragged || !dragged->m_group || dragged->m_group->size() < 2)
+        return;
+
+    g_tabDrag           = STabDragState{};
+    g_tabDrag.window    = dragged;
+    g_tabDrag.pressPos  = pos;
+    g_tabDrag.barBox    = assignedBoxGlobal();
+    g_tabDrag.barWidth  = m_barWidth;
+    g_tabDrag.barHeight = m_barHeight;
+    g_tabDrag.gapsIn    = *PINNERGAP;
+    g_tabDrag.gapsOut   = *POUTERGAP;
+    g_tabDrag.stacked   = *PSTACKED;
+    g_tabDrag.armed     = true;
+}
+
+void CHyprGroupBarDecoration::updateTabDrag(const Vector2D& pos) {
+    if (!tabDragArmed())
+        return;
+
+    const auto WINDOW = g_tabDrag.window.lock();
+    if (!WINDOW || !WINDOW->m_group) {
+        endTabDrag();
+        return;
+    }
+
+    if (!g_tabDrag.active) {
+        if (pos.distance(g_tabDrag.pressPos) < TAB_DRAG_THRESHOLD)
+            return;
+
+        g_tabDrag.active = true;
+    }
+
+    const auto   GROUP = WINDOW->m_group;
+    const size_t SIZE  = GROUP->size();
+    if (SIZE < 2) {
+        endTabDrag();
+        return;
+    }
+
+    // Which slot the cursor is over. Same geometry the press and drop paths use,
+    // just evaluated continuously instead of once.
+    const double STEP = g_tabDrag.stacked ? g_tabDrag.barHeight + g_tabDrag.gapsOut : g_tabDrag.barWidth + g_tabDrag.gapsIn;
+    if (STEP <= 0)
+        return;
+
+    // Off-axis distance from the bar. Beyond the band the gesture pauses rather than
+    // ending, so overshooting and coming back behaves the way a person expects.
+    const double ACROSS    = g_tabDrag.stacked ? pos.x - g_tabDrag.barBox.x : pos.y - g_tabDrag.barBox.y;
+    const double THICKNESS = g_tabDrag.stacked ? g_tabDrag.barBox.w : g_tabDrag.barBox.h;
+    if (THICKNESS > 0 && (ACROSS < -THICKNESS * TAB_DRAG_BAND || ACROSS > THICKNESS * (1 + TAB_DRAG_BAND)))
+        return;
+
+    const double RELATIVE = g_tabDrag.stacked ? pos.y - g_tabDrag.barBox.y : pos.x - g_tabDrag.barBox.x;
+    const int    HOVERED  = RELATIVE < 0 ? 0 : sc<int>(RELATIVE / STEP);
+    const size_t TARGET   = std::clamp(HOVERED, 0, sc<int>(SIZE) - 1);
+
+    // swapWithNext/swapWithLast move whichever window is current and follow it, so
+    // the dragged tab has to be the current one. It normally is — the press made it
+    // current — but a group can be re-pointed from elsewhere mid-gesture.
+    if (GROUP->current() != WINDOW)
+        GROUP->setCurrent(WINDOW);
+
+    size_t idx = GROUP->getCurrentIdx();
+    if (idx == TARGET)
+        return;
+
+    // Bounded: each step moves one slot toward the target, and neither helper wraps
+    // while the target is on the side we are walking toward.
+    for (size_t guard = 0; idx != TARGET && guard < SIZE; ++guard) {
+        if (idx < TARGET) {
+            GROUP->swapWithNext();
+            ++idx;
+        } else {
+            GROUP->swapWithLast();
+            --idx;
+        }
+    }
+
+    g_pHyprRenderer->damageBox(g_tabDrag.barBox);
+}
 
 CHyprGroupBarDecoration::CHyprGroupBarDecoration(PHLWINDOW pWindow) : IHyprWindowDecoration(pWindow), m_window(pWindow) {
     static auto PENABLED   = CConfigValue<Config::INTEGER>("group:groupbar:enabled");
@@ -484,6 +624,11 @@ bool CHyprGroupBarDecoration::onMouseButtonOnDeco(const Vector2D& pos, const IPo
 
     if (pWindow->m_isFloating)
         Desktop::windowState()->raise(pWindow);
+
+    // A press on a tab is also the start of a possible drag. Nothing moves until
+    // the pointer passes the threshold, so an ordinary click still just focuses.
+    if (e.button == BTN_LEFT_CODE)
+        armTabDrag(pos, pWindow);
 
     return true;
 }

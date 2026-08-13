@@ -48,6 +48,22 @@ class CHyprGroupBarDecoration : public IHyprWindowDecoration {
 
     virtual std::string                getDisplayName();
 
+    // Modifier-free tab dragging, in the spirit of general:resize_on_border: press
+    // a tab and drag it along the bar to reorder the group, no keybind involved.
+    //
+    // The state is static because the pointer is a singleton — at most one tab can
+    // be dragged at a time — and the bar geometry is snapshotted when the press
+    // happens, so nothing here has to hold a pointer to a decoration that may be
+    // destroyed mid-gesture (a window in the group closing would do it).
+    //
+    // armed  : a press on a tab is being tracked
+    // active : the pointer has since moved past the threshold, so it is a drag and
+    //          not a click
+    static bool tabDragArmed();
+    static bool tabDragActive();
+    static void updateTabDrag(const Vector2D& pos);
+    static void endTabDrag();
+
   private:
     CBox                      m_assignedBox = {0};
 
@@ -65,6 +81,8 @@ class CHyprGroupBarDecoration : public IHyprWindowDecoration {
 
     CBox                      assignedBoxGlobal();
     bool                      visible();
+
+    void                      armTabDrag(const Vector2D& pos, PHLWINDOW dragged);
 
     bool                      onBeginWindowDragOnDeco(const Vector2D&);
     bool                      onEndWindowDragOnDeco(const Vector2D&, PHLWINDOW);

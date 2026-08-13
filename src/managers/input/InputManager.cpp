@@ -12,6 +12,7 @@
 #include "../../desktop/view/WLSurface.hpp"
 #include "../../desktop/state/FocusState.hpp"
 #include "../../desktop/state/WindowState.hpp"
+#include "../../render/decorations/CHyprGroupBarDecoration.hpp"
 #include "../../protocols/CursorShape.hpp"
 #include "../../protocols/IdleInhibit.hpp"
 #include "../../protocols/RelativePointer.hpp"
@@ -238,6 +239,12 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, st
 
     if (MOUSECOORDSFLOORED == m_lastCursorPosFloored && !refocus)
         return;
+
+    // A groupbar tab being dragged reorders as the pointer crosses tab boundaries.
+    // Guarded by a cheap static check so the common case costs one branch on the
+    // hottest path in the compositor.
+    if (CHyprGroupBarDecoration::tabDragArmed())
+        CHyprGroupBarDecoration::updateTabDrag(mouseCoords);
 
     static auto PFOLLOWMOUSE          = CConfigValue<Config::INTEGER>("input:follow_mouse");
     static auto PFOLLOWMOUSETHRESHOLD = CConfigValue<Config::FLOAT>("input:follow_mouse_threshold");
@@ -853,6 +860,18 @@ void CInputManager::setClickMode(eClickBehaviorMode mode) {
 }
 
 void CInputManager::processMouseDownNormal(const IPointer::SButtonEvent& e, SP<IPointer> mouse) {
+
+    // Ends a groupbar tab drag wherever the release lands — the pointer may well
+    // have left the bar by now, in which case the decoration itself never sees it.
+    // A release that ended a real drag is swallowed; one that only ever was a click
+    // falls through to the normal path below.
+    if (e.state == WL_POINTER_BUTTON_STATE_RELEASED && CHyprGroupBarDecoration::tabDragArmed()) {
+        const bool WAS_DRAG = CHyprGroupBarDecoration::tabDragActive();
+        CHyprGroupBarDecoration::endTabDrag();
+
+        if (WAS_DRAG)
+            return;
+    }
 
     // notify the keybind manager
     static auto PPASSMOUSE        = CConfigValue<Config::INTEGER>("binds:pass_mouse_when_bound");
