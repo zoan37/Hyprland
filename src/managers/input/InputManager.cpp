@@ -1403,6 +1403,8 @@ void CInputManager::setPointerConfigs() {
                 Pointer::mgr()->attachPointer(m);
                 m->m_connected = true;
             } else if (!ENABLED && m->m_connected) {
+                // Same reasoning as destroyPointer: the device is going away mid-gesture.
+                IHyprWindowDecoration::cancelPointerGrab();
                 Pointer::mgr()->detachPointer(m);
                 m->m_connected = false;
             }
@@ -1602,6 +1604,11 @@ void CInputManager::destroyKeyboard(SP<IKeyboard> pKeyboard) {
 
 void CInputManager::destroyPointer(SP<IPointer> mouse) {
     Log::logger->log(Log::DEBUG, "Pointer at {:x} removed", rc<uintptr_t>(mouse.get()));
+
+    // Whatever gesture a decoration was running is waiting on a release that is not
+    // coming: the device that would have sent it is gone. Left armed, it would take
+    // the next matching button-up from some other pointer instead.
+    IHyprWindowDecoration::cancelPointerGrab();
 
     std::erase_if(m_pointers, [mouse](const auto& other) { return other == mouse; });
 
