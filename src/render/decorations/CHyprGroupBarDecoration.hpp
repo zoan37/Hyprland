@@ -65,9 +65,9 @@ class CHyprGroupBarDecoration : public IHyprWindowDecoration {
     //
     // The state is static rather than per-instance because the decoration drawing the
     // bar changes mid-gesture: reordering moves the group's current window, and the
-    // bar is drawn by whichever decoration belongs to it. The bar geometry is
-    // snapshotted on press, which is valid for the whole gesture since reordering
-    // permutes tabs within the bar but never moves the bar itself.
+    // bar is drawn by whichever decoration belongs to it. Bar geometry is never
+    // snapshotted: it is read from the decoration on every event, because a member
+    // closing or the tile being resized changes the tab dimensions mid-drag.
     //
     // armed  : a press on a tab is being tracked
     // active : the pointer has since moved past the threshold, so it is a drag and

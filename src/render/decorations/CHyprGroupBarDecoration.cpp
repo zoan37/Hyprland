@@ -92,13 +92,17 @@ CHyprGroupBarDecoration::~CHyprGroupBarDecoration() {
 }
 
 void CHyprGroupBarDecoration::onPointerGrabCancelled() {
+    // cancelPointerGrab() drops the grab before calling this, so endTabDrag can no
+    // longer reach a decoration to repaint through. The tab snaps back into its slot
+    // here, and on a cancel path nothing else is going to damage the bar.
+    if (g_tabDrag.active)
+        damageEntire();
+
     endTabDrag();
 }
 
 void CHyprGroupBarDecoration::armTabDrag(const Vector2D& pos, PHLWINDOW dragged) {
     static auto PSTACKED  = CConfigValue<Config::INTEGER>("group:groupbar:stacked");
-    static auto POUTERGAP = CConfigValue<Config::INTEGER>("group:groupbar:gaps_out");
-    static auto PINNERGAP = CConfigValue<Config::INTEGER>("group:groupbar:gaps_in");
     static auto PDRAGTABS = CConfigValue<Config::INTEGER>("group:groupbar:drag_tabs");
 
     if (!*PDRAGTABS || !dragged || !dragged->m_group || dragged->m_group->size() < 2)
@@ -177,7 +181,6 @@ bool CHyprGroupBarDecoration::draggedTabAlong(PHLWINDOW w, const CBox& barBox, d
 
 void CHyprGroupBarDecoration::updateTabDrag(const Vector2D& pos) {
     static auto PSTACKED  = CConfigValue<Config::INTEGER>("group:groupbar:stacked");
-    static auto POUTERGAP = CConfigValue<Config::INTEGER>("group:groupbar:gaps_out");
     static auto PINNERGAP = CConfigValue<Config::INTEGER>("group:groupbar:gaps_in");
 
     if (!tabDragArmed()) {
