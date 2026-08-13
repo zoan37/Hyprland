@@ -28,11 +28,12 @@ enum eDecorationFlags : uint8_t {
 };
 
 class CDecorationPositioner;
+class IPointer;
 
 class IHyprWindowDecoration {
   public:
     IHyprWindowDecoration(PHLWINDOW);
-    virtual ~IHyprWindowDecoration() = default;
+    virtual ~IHyprWindowDecoration();
 
     virtual SDecorationPositioningInfo getPositioningInfo() = 0;
 
@@ -53,6 +54,38 @@ class IHyprWindowDecoration {
     virtual uint64_t                   getDecorationFlags();
 
     virtual std::string                getDisplayName();
+
+    // Pointer grab.
+    //
+    // checkInputOnDecos only delivers to decorations whose box contains the cursor,
+    // which is right for clicks and wrong for gestures: a drag that begins on a
+    // decoration has to keep receiving motion after the pointer has left it, and has
+    // to see the release wherever it happens. A decoration that claims a press takes
+    // the grab, and from then until it releases it receives INPUT_TYPE_MOTION and the
+    // matching button release regardless of where the pointer is.
+    //
+    // Only one grab exists at a time, because the pointer is a singleton. The grab is
+    // dropped automatically if the holding decoration is destroyed, which a window
+    // closing mid-gesture would otherwise turn into a dangling pointer.
+    // The device is bound separately: a button event carries no pointer, so the input
+    // manager attaches it once the decoration has taken the grab.
+    void grabPointer(uint32_t button);
+    void bindPointerGrabDevice(const WP<IPointer>& pointer);
+    void ungrabPointer();
+    bool hasPointerGrab() const;
+
+    // True when an event from this device and button belongs to the current grab.
+    static bool pointerGrabWants(uint32_t button, const SP<IPointer>& from);
+    static bool pointerGrabHeldBy(const SP<IPointer>& pointer);
+
+    // Called when the grab is taken away rather than ended by a release — the
+    // compositor force-releases held buttons on things like a workspace change, and
+    // a gesture that kept running after that would be acting on a button nobody is
+    // holding.
+    virtual void                  onPointerGrabCancelled();
+
+    static IHyprWindowDecoration* pointerGrab();
+    static void                   cancelPointerGrab();
 
   private:
     PHLWINDOWREF m_window;

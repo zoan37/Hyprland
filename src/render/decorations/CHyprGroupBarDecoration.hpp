@@ -26,7 +26,7 @@ void refreshGroupBarGradients();
 class CHyprGroupBarDecoration : public IHyprWindowDecoration {
   public:
     CHyprGroupBarDecoration(PHLWINDOW);
-    virtual ~CHyprGroupBarDecoration() = default;
+    virtual ~CHyprGroupBarDecoration();
 
     virtual SDecorationPositioningInfo getPositioningInfo();
 
@@ -48,7 +48,35 @@ class CHyprGroupBarDecoration : public IHyprWindowDecoration {
 
     virtual std::string                getDisplayName();
 
+    virtual void                       onPointerGrabCancelled();
+
+    // A tab being dragged is drawn under the cursor rather than in its slot, so it
+    // slides continuously instead of jumping a slot at a time. Fills `outAlong` with
+    // its position along the bar, measured from the bar's origin, and returns false
+    // for every tab that is not the one being dragged.
+
   private:
+    // Modifier-free tab dragging, in the spirit of general:resize_on_border: press a
+    // tab and drag it along the bar to reorder the group, no keybind involved. The
+    // gesture takes the decoration pointer grab on arming, so motion and the release
+    // reach it wherever the cursor goes.
+    //
+    // The state is static rather than per-instance because the decoration drawing the
+    // bar changes mid-gesture: reordering moves the group's current window, and the
+    // bar is drawn by whichever decoration belongs to it. Bar geometry is never
+    // snapshotted: it is read from the decoration on every event, because a member
+    // closing or the tile being resized changes the tab dimensions mid-drag.
+    //
+    // armed  : a press on a tab is being tracked
+    // active : the pointer has since moved past the threshold, so it is a drag and
+    //          not a click
+    static double             tabStep(const CBox& barBox, size_t count);
+    static bool               draggedTabAlong(PHLWINDOW w, const CBox& barBox, double tabLen, double& outAlong);
+    static bool               tabDragArmed();
+    static bool               tabDragActive();
+    void                      updateTabDrag(const Vector2D& pos);
+    static void               endTabDrag();
+
     CBox                      m_assignedBox = {0};
 
     PHLWINDOWREF              m_window;
@@ -65,6 +93,8 @@ class CHyprGroupBarDecoration : public IHyprWindowDecoration {
 
     CBox                      assignedBoxGlobal();
     bool                      visible();
+
+    void                      armTabDrag(const Vector2D& pos, PHLWINDOW dragged);
 
     bool                      onBeginWindowDragOnDeco(const Vector2D&);
     bool                      onEndWindowDragOnDeco(const Vector2D&, PHLWINDOW);

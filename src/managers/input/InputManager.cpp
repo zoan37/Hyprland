@@ -12,6 +12,7 @@
 #include "../../desktop/view/WLSurface.hpp"
 #include "../../desktop/state/FocusState.hpp"
 #include "../../desktop/state/WindowState.hpp"
+#include "../../render/decorations/IHyprWindowDecoration.hpp"
 #include "../../protocols/CursorShape.hpp"
 #include "../../protocols/IdleInhibit.hpp"
 #include "../../protocols/RelativePointer.hpp"
@@ -155,8 +156,13 @@ void CInputManager::onMouseMoved(IPointer::SMotionEvent e) {
         PROTO::relativePointer->sendRelativeMotion(sc<uint64_t>(e.timeMs) * 1000, delta, unaccel);
     Pointer::mgr()->move(DELTA);
 
-    if (PROTO::inputCapture->isCaptured())
+    if (PROTO::inputCapture->isCaptured()) {
+        // Capture can begin mid-motion, and this returns before the grab would be
+        // told anything. Left alone, the gesture would resume the moment capture
+        // ended — possibly long after the button was let go.
+        IHyprWindowDecoration::cancelPointerGrab();
         return;
+    }
 
     mouseMoveUnified(e.timeMs, false, e.mouse);
 
@@ -270,6 +276,25 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, st
     Event::bus()->m_events.input.mouse.move.emit(MOUSECOORDSFLOORED, info);
     if (info.cancelled)
         return;
+
+    // A decoration holding the pointer grab is mid-gesture, so it gets motion wherever
+    // the pointer is — not only while the pointer stays inside its box, which is all
+    // checkInputOnDecos would give it. One null check on the hottest path.
+    //
+    // After the cancellation check, so a motion a plugin suppressed does not move a
+    // gesture either — the gesture itself survives, since cancelling one event is not
+    // the same as ending a drag. And only for real pointer motion: touch sends its
+    // position here as an overridePos, and a tap across the screen must not drive a
+    // drag the mouse never made.
+    if (const auto GRAB = IHyprWindowDecoration::pointerGrab(); GRAB && !overridePos.has_value()) {
+        // Decoration input is gated on the session lock everywhere else, and a
+        // gesture must not keep running underneath a lock screen. End it rather than
+        // merely pausing it: by the time the session unlocks the button is long gone.
+        if (g_pSessionLockManager->isSessionLocked())
+            IHyprWindowDecoration::cancelPointerGrab();
+        else
+            GRAB->onInputOnDeco(INPUT_TYPE_MOTION, mouseCoords);
+    }
 
     m_lastCursorPosFloored = MOUSECOORDSFLOORED;
 
@@ -749,8 +774,14 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, st
 void CInputManager::onMouseButton(IPointer::SButtonEvent e, SP<IPointer> mouse) {
     Event::SCallbackInfo info;
     Event::bus()->m_events.input.mouse.button.emit(e, info);
-    if (info.cancelled)
+    if (info.cancelled) {
+        // The button is physically up whether or not a plugin swallowed the event, so
+        // a decoration waiting on this release would otherwise keep running forever.
+        if (e.state == WL_POINTER_BUTTON_STATE_RELEASED && IHyprWindowDecoration::pointerGrabWants(e.button, mouse))
+            IHyprWindowDecoration::cancelPointerGrab();
+
         return;
+    }
 
     if (e.mouse)
         recheckMouseWarpOnMouseInput();
@@ -761,6 +792,11 @@ void CInputManager::onMouseButton(IPointer::SButtonEvent e, SP<IPointer> mouse) 
         Keybinds::mgr()->onMouseEvent(e, mouse, true);
         if (e.state == WL_POINTER_BUTTON_STATE_RELEASED)
             std::erase_if(m_currentlyHeldButtons, [&](const auto& held) { return held.button == e.button && held.pointer.lock() == mouse; });
+
+        // Capture owns the pointer now and this release will never reach
+        // processMouseDownNormal, so a decoration gesture would resume the moment
+        // capture ends, acting on a button nobody is holding.
+        IHyprWindowDecoration::cancelPointerGrab();
         return;
     }
 
@@ -844,6 +880,10 @@ eClickBehaviorMode CInputManager::getClickMode() {
 }
 
 void CInputManager::setClickMode(eClickBehaviorMode mode) {
+    // Button events are about to be routed by click mode, and only the normal path
+    // hands a release to the grab holder. Anything mid-gesture ends here.
+    IHyprWindowDecoration::cancelPointerGrab();
+
     switch (mode) {
         case CLICKMODE_DEFAULT:
             Log::logger->log(Log::DEBUG, "SetClickMode: DEFAULT");
@@ -877,14 +917,35 @@ void CInputManager::processMouseDownNormal(const IPointer::SButtonEvent& e, SP<I
     static auto PBORDERGRABEXTEND = CConfigValue<Config::INTEGER>("general:extend_border_grab_area");
     const auto  BORDER_GRAB_AREA  = *PRESIZEONBORDER ? *PBORDERSIZE + *PBORDERGRABEXTEND : 0;
 
+    // A decoration holding the pointer grab gets the release wherever it lands; by
+    // now the pointer may be nowhere near it, so checkInputOnDecos below would never
+    // reach it. Only the button that opened the grab is routed this way. If the
+    // decoration consumes it, its gesture ended here and nothing else should act.
+    // Sits ahead of the pass_mouse_when_bound return: a bind matching the release
+    // mid-gesture must not leave the grab held with no button behind it.
+    if (const auto GRAB = IHyprWindowDecoration::pointerGrab(); GRAB && e.state == WL_POINTER_BUTTON_STATE_RELEASED && IHyprWindowDecoration::pointerGrabWants(e.button, mouse) &&
+        GRAB->onInputOnDeco(INPUT_TYPE_BUTTON, g_pInputManager->getMouseCoordsInternal(), e))
+        return;
+
     if (!PASS && !*PPASSMOUSE)
         return;
 
     const auto mouseCoords = g_pInputManager->getMouseCoordsInternal();
     const auto w           = Desktop::viewState()->hitTest().windowAt(mouseCoords, Desktop::View::ALLOW_FLOATING | Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS);
 
-    if (w && !m_lastFocusOnLS && !g_pSessionLockManager->isSessionLocked() && w->checkInputOnDecos(INPUT_TYPE_BUTTON, mouseCoords, e))
-        return;
+    if (w && !m_lastFocusOnLS && !g_pSessionLockManager->isSessionLocked()) {
+        const auto GRAB_BEFORE = IHyprWindowDecoration::pointerGrab();
+        if (w->checkInputOnDecos(INPUT_TYPE_BUTTON, mouseCoords, e)) {
+            // A press that took the grab needs its device attached: the button event
+            // carries no pointer, so the decoration cannot do this itself. Only a grab
+            // this press created is bound, so an unrelated handled press cannot rebind
+            // one already in progress.
+            if (const auto GRAB = IHyprWindowDecoration::pointerGrab(); GRAB && GRAB != GRAB_BEFORE)
+                GRAB->bindPointerGrabDevice(mouse);
+
+            return;
+        }
+    }
 
     // clicking on border triggers resize
     // TODO detect click on LS properly
@@ -1370,6 +1431,9 @@ void CInputManager::setPointerConfigs() {
                 Pointer::mgr()->attachPointer(m);
                 m->m_connected = true;
             } else if (!ENABLED && m->m_connected) {
+                // Same reasoning as destroyPointer: the device is going away mid-gesture.
+                if (IHyprWindowDecoration::pointerGrabHeldBy(m))
+                    IHyprWindowDecoration::cancelPointerGrab();
                 Pointer::mgr()->detachPointer(m);
                 m->m_connected = false;
             }
@@ -1585,6 +1649,12 @@ void CInputManager::destroyPointer(SP<IPointer> mouse) {
         g_pSeatManager->sendPointerButton(Time::millis(Time::steadyNow()), it->button, WL_POINTER_BUTTON_STATE_RELEASED);
         it = m_currentlyHeldButtons.erase(it);
     }
+
+    // Those synthetic releases go to the seat, not through the button path, so a
+    // gesture waiting on this pointer would never hear about it.
+    if (IHyprWindowDecoration::pointerGrabHeldBy(mouse))
+        IHyprWindowDecoration::cancelPointerGrab();
+
     std::erase_if(m_pointers, [mouse](const auto& other) { return other == mouse; });
 
     g_pSeatManager->setMouse(!m_pointers.empty() ? m_pointers.front() : nullptr);
@@ -2225,6 +2295,10 @@ void CInputManager::releaseAllMouseButtons() {
 
     if (PROTO::data->dndActive())
         return;
+
+    // Whatever gesture a decoration was running is over: the button it is waiting on
+    // is about to be released without it ever seeing the event.
+    IHyprWindowDecoration::cancelPointerGrab();
 
     for (auto const& mb : buttonsCopy) {
         g_pSeatManager->sendPointerButton(Time::millis(Time::steadyNow()), mb.button, WL_POINTER_BUTTON_STATE_RELEASED);

@@ -35,6 +35,7 @@ namespace Desktop::View {
 
         void                             swapWithNext();
         void                             swapWithLast();
+        void                             moveCurrentToIndex(size_t idx);
 
         PHLWINDOW                        head() const;
         PHLWINDOW                        tail() const;
