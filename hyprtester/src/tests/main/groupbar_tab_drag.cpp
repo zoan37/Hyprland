@@ -61,6 +61,17 @@ static void dragAlongBar(int fromX, int toX, int steps = 12) {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 }
 
+// "\tclass: kitty_A\n" -> "kitty_A"
+static std::string classOf(const std::string& activeWindow) {
+    const auto POS = activeWindow.find("class: ");
+    if (POS == std::string::npos)
+        return "";
+
+    const auto START = POS + std::string_view{"class: "}.length();
+    const auto END   = activeWindow.find('\n', START);
+    return activeWindow.substr(START, END == std::string::npos ? END : END - START);
+}
+
 // Reads back which window occupies a slot, by clicking that tab and asking what is
 // focused. Uses only behaviour that already existed before tab dragging, so a
 // failure here cannot be the assertion itself being wrong.
@@ -70,7 +81,7 @@ static std::string classInSlot(int index) {
     button(true);
     button(false);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    return getFromSocket("/activewindow");
+    return classOf(getFromSocket("/activewindow"));
 }
 
 TEST_CASE(groupbar_tab_drag) {
@@ -108,19 +119,15 @@ TEST_CASE(groupbar_tab_drag) {
     // Whatever the grouping left behind, put a known window in slot 0 to drag.
     const std::string SLOT0_BEFORE = classInSlot(0);
 
+    EXPECT_NOT(SLOT0_BEFORE, "");
+
     NLog::log("{}Drag the first tab to the last slot", Colors::YELLOW);
     dragAlongBar(tabMidX(0), tabMidX(2));
-    {
-        const auto SLOT2 = classInSlot(2);
-        EXPECT_CONTAINS(SLOT2, SLOT0_BEFORE.substr(SLOT0_BEFORE.find("class: "), 20));
-    }
+    EXPECT(classInSlot(2), SLOT0_BEFORE);
 
     NLog::log("{}Drag it back to the first slot", Colors::YELLOW);
     dragAlongBar(tabMidX(2), tabMidX(0));
-    {
-        const auto SLOT0 = classInSlot(0);
-        EXPECT_CONTAINS(SLOT0, SLOT0_BEFORE.substr(SLOT0_BEFORE.find("class: "), 20));
-    }
+    EXPECT(classInSlot(0), SLOT0_BEFORE);
 
     NLog::log("{}A click must not reorder", Colors::YELLOW);
     {
@@ -129,7 +136,7 @@ TEST_CASE(groupbar_tab_drag) {
         button(true);
         button(false);
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        EXPECT_CONTAINS(classInSlot(1), BEFORE.substr(BEFORE.find("class: "), 20));
+        EXPECT(classInSlot(1), BEFORE);
     }
 
     NLog::log("{}drag_tabs = false disables the gesture", Colors::YELLOW);
@@ -137,7 +144,7 @@ TEST_CASE(groupbar_tab_drag) {
         OK(getFromSocket("/eval hl.config({ group = { groupbar = { drag_tabs = false } } })"));
         const auto BEFORE = classInSlot(0);
         dragAlongBar(tabMidX(0), tabMidX(2));
-        EXPECT_CONTAINS(classInSlot(0), BEFORE.substr(BEFORE.find("class: "), 20));
+        EXPECT(classInSlot(0), BEFORE);
         OK(getFromSocket("/eval hl.config({ group = { groupbar = { drag_tabs = true } } })"));
     }
 
