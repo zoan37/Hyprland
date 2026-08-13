@@ -163,6 +163,24 @@ TEST_CASE(groupbar_tab_drag) {
     // back to a horizontal bar for the remaining cases
     OK(applyGroupbarConfig(false, true));
 
+    // Every drag above stays inside the bar, so hit-test delivery alone would satisfy
+    // them. This one leaves the decoration entirely and releases outside it: the
+    // pointer grab is the only thing that can carry motion and the release back.
+    NLog::log("{}Dragging works with the pointer outside the groupbar", Colors::YELLOW);
+    {
+        const auto   SLOT0   = classInSlot(HORIZONTAL, 0);
+        const auto   BELOW_Y = BAR_Y + H_RESERVED * 3; // outside the bar, inside the band
+        const SPoint FROM{.x = tabMid(HORIZONTAL, 0).x, .y = tabMid(HORIZONTAL, 0).y};
+        const SPoint TO{.x = tabMid(HORIZONTAL, 2).x, .y = BELOW_Y};
+
+        dragAlongBar(FROM, TO);
+        EXPECT(classInSlot(HORIZONTAL, 2), SLOT0);
+
+        // put it back
+        dragAlongBar(tabMid(HORIZONTAL, 2), tabMid(HORIZONTAL, 0));
+        EXPECT(classInSlot(HORIZONTAL, 0), SLOT0);
+    }
+
     NLog::log("{}A click must not reorder", Colors::YELLOW);
     {
         const auto BEFORE = classInSlot(HORIZONTAL, 1);
