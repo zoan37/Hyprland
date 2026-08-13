@@ -76,9 +76,9 @@ void CHyprGroupBarDecoration::endTabDrag() {
     if (g_tabDrag.active)
         g_pHyprRenderer->damageBox(g_tabDrag.barBox);
 
-    // The gesture is the only thing that ever takes the grab from a groupbar, so
-    // whoever holds it here is the decoration that armed this drag.
-    if (const auto GRAB = pointerGrab())
+    // Release only a grab a groupbar holds: this is static state shared by every
+    // groupbar, and some other decoration's gesture is not ours to cancel.
+    if (const auto GRAB = pointerGrab(); GRAB && GRAB->getDecorationType() == DECORATION_GROUPBAR)
         GRAB->ungrabPointer();
 
     g_tabDrag = STabDragState{};
@@ -130,8 +130,12 @@ bool CHyprGroupBarDecoration::draggedTabAlong(PHLWINDOW w, double barLen, double
 }
 
 void CHyprGroupBarDecoration::updateTabDrag(const Vector2D& pos) {
-    if (!tabDragArmed())
+    if (!tabDragArmed()) {
+        // Nothing is being dragged any more — most likely the window went away
+        // mid-gesture. Drop the grab rather than keep taking motion forever.
+        endTabDrag();
         return;
+    }
 
     const auto WINDOW = g_tabDrag.window.lock();
     if (!WINDOW || !WINDOW->m_group) {
@@ -628,7 +632,7 @@ bool CHyprGroupBarDecoration::onMouseButtonOnDeco(const Vector2D& pos, const IPo
     // it reaches us wherever the pointer ended up. A press that never passed the
     // threshold was a click, not a drag, so it is not consumed and falls through to
     // the normal handling below.
-    if (e.button == BTN_LEFT_CODE && e.state == WL_POINTER_BUTTON_STATE_RELEASED && tabDragArmed()) {
+    if (e.button == BTN_LEFT_CODE && e.state == WL_POINTER_BUTTON_STATE_RELEASED && hasPointerGrab()) {
         const bool WAS_DRAG = tabDragActive();
         endTabDrag();
         return WAS_DRAG;
