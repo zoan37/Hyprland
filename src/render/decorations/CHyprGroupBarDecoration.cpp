@@ -82,6 +82,15 @@ void CHyprGroupBarDecoration::endTabDrag() {
     g_tabDrag = STabDragState{};
 }
 
+CHyprGroupBarDecoration::~CHyprGroupBarDecoration() {
+    // The base destructor drops the grab, but the gesture state is shared and static,
+    // so it would stay armed with nothing able to end it: the release can no longer
+    // reach us, and the dragged window — still alive, merely moved out of the group —
+    // would render at stale drag coordinates if it were grouped again.
+    if (hasPointerGrab())
+        endTabDrag();
+}
+
 void CHyprGroupBarDecoration::onPointerGrabCancelled() {
     endTabDrag();
 }

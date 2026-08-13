@@ -240,13 +240,6 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, st
     if (MOUSECOORDSFLOORED == m_lastCursorPosFloored && !refocus)
         return;
 
-    // A decoration holding the pointer grab is mid-gesture, so it gets motion
-    // wherever the pointer is — not only while the pointer stays inside its box,
-    // which is all checkInputOnDecos would give it. One null check on the hottest
-    // path in the compositor.
-    if (const auto GRAB = IHyprWindowDecoration::pointerGrab())
-        GRAB->onInputOnDeco(INPUT_TYPE_MOTION, mouseCoords);
-
     static auto PFOLLOWMOUSE          = CConfigValue<Config::INTEGER>("input:follow_mouse");
     static auto PFOLLOWMOUSETHRESHOLD = CConfigValue<Config::FLOAT>("input:follow_mouse_threshold");
     static auto PMOUSEREFOCUS         = CConfigValue<Config::INTEGER>("input:mouse_refocus");
@@ -277,6 +270,19 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, st
     Event::bus()->m_events.input.mouse.move.emit(MOUSECOORDSFLOORED, info);
     if (info.cancelled)
         return;
+
+    // A decoration holding the pointer grab is mid-gesture, so it gets motion wherever
+    // the pointer is — not only while the pointer stays inside its box, which is all
+    // checkInputOnDecos would give it. One null check on the hottest path.
+    //
+    // After the cancellation check, so a plugin cancelling input.mouse.move cancels it
+    // for gestures too, and only for real pointer motion: touch sends its position
+    // here as an overridePos, and a tap across the screen must not drive a drag the
+    // mouse never made.
+    if (!overridePos.has_value()) {
+        if (const auto GRAB = IHyprWindowDecoration::pointerGrab())
+            GRAB->onInputOnDeco(INPUT_TYPE_MOTION, mouseCoords);
+    }
 
     m_lastCursorPosFloored = MOUSECOORDSFLOORED;
 
@@ -758,8 +764,13 @@ void CInputManager::onMouseButton(IPointer::SButtonEvent e, SP<IPointer> mouse) 
 
     PROTO::inputCapture->button(e.button, e.state);
 
-    if (PROTO::inputCapture->isCaptured())
+    if (PROTO::inputCapture->isCaptured()) {
+        // Capture owns the pointer now and this release will never reach
+        // processMouseDownNormal, so a decoration gesture would resume the moment
+        // capture ends, acting on a button nobody is holding.
+        IHyprWindowDecoration::cancelPointerGrab();
         return;
+    }
 
     m_lastCursorMovement.reset();
 

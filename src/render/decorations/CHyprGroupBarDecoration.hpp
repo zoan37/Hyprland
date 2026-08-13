@@ -26,7 +26,7 @@ void refreshGroupBarGradients();
 class CHyprGroupBarDecoration : public IHyprWindowDecoration {
   public:
     CHyprGroupBarDecoration(PHLWINDOW);
-    virtual ~CHyprGroupBarDecoration() = default;
+    virtual ~CHyprGroupBarDecoration();
 
     virtual SDecorationPositioningInfo getPositioningInfo();
 

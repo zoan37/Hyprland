@@ -13,52 +13,59 @@ using namespace Hyprutils::Memory;
 #define UP CUniquePointer
 #define SP CSharedPointer
 
-// Geometry of the groupbar under the config this test pins below, on the standard
-// 1920x1080 test output. A single tiled window sits at 22,22 sized 1876x1036 (see
-// the groups test); the bar reserves BAR_H off the top of that, and the window is
-// pushed down by the same amount.
+// Geometry of the groupbar under the config these tests pin, on the standard
+// 1920x1080 test output. A single tiled window sits at 22,22 sized 1876x1036 (see the
+// groups test), and the bar reserves space off the top of it.
 //
-//   BAR_H = gaps_out * (1 + keep_upper_gap) + indicator_height + indicator_gap + height
-//         = 2 * 2 + 3 + 0 + 20 = 27
-static constexpr int BAR_X     = 22;
-static constexpr int BAR_Y     = 22;
-static constexpr int BAR_W     = 1876;
-static constexpr int BAR_H     = 27;
-static constexpr int GAPS_IN   = 2;
-static constexpr int TAB_COUNT = 3;
-static constexpr int TAB_W     = (BAR_W - GAPS_IN * (TAB_COUNT - 1)) / TAB_COUNT;
+// Horizontal, one row of tabs:
+//   reserved = gaps_out * (1 + keep_upper_gap) + indicator_height + indicator_gap + height
+//            = 2 * 2 + 3 + 0 + 20 = 27
+//   tab width = (bar width - gaps_in * (n - 1)) / n
+//
+// Stacked, one tab per row:
+//   row      = gaps_out + indicator_height + indicator_gap + height = 25
+//   reserved = row * n + gaps_out * keep_upper_gap = 25 * 3 + 2 = 77
+//   tab step = row
+static constexpr int BAR_X      = 22;
+static constexpr int BAR_Y      = 22;
+static constexpr int BAR_W      = 1876;
+static constexpr int TAB_COUNT  = 3;
+static constexpr int GAPS_IN    = 2;
+static constexpr int H_RESERVED = 27;
+static constexpr int H_TAB_W    = (BAR_W - GAPS_IN * (TAB_COUNT - 1)) / TAB_COUNT;
+static constexpr int S_ROW      = 25;
+static constexpr int S_RESERVED = S_ROW * TAB_COUNT + 2;
 
-// vertical middle of the bar, and the horizontal middle of each tab
-static constexpr int BAR_MID_Y = BAR_Y + BAR_H / 2;
+// hyprtester does not pull in Hyprland's math headers, so a plain pair will do.
+struct SPoint {
+    int x = 0;
+    int y = 0;
+};
 
-static int           tabMidX(int index) {
-    return BAR_X + index * (TAB_W + GAPS_IN) + TAB_W / 2;
+struct SBarLayout {
+    bool        stacked  = false;
+    int         reserved = H_RESERVED;
+    const char* name     = "horizontal";
+};
+
+static constexpr SBarLayout HORIZONTAL{.stacked = false, .reserved = H_RESERVED, .name = "horizontal"};
+static constexpr SBarLayout STACKED{.stacked = true, .reserved = S_RESERVED, .name = "stacked"};
+
+// Middle of the tab occupying a slot. Both axes come from the same arithmetic the
+// implementation uses to turn a cursor position back into a slot.
+static SPoint tabMid(const SBarLayout& layout, int index) {
+    if (layout.stacked)
+        return SPoint{.x = BAR_X + BAR_W / 2, .y = BAR_Y + index * S_ROW + S_ROW / 2};
+
+    return SPoint{.x = BAR_X + index * (H_TAB_W + GAPS_IN) + H_TAB_W / 2, .y = BAR_Y + layout.reserved / 2};
 }
 
-static bool moveCursor(int x, int y) {
-    return getFromSocket(std::format("/dispatch hl.dsp.cursor.move({{ x = {}, y = {} }})", x, y)) == "ok";
+static bool moveCursor(const SPoint& pos) {
+    return getFromSocket(std::format("/dispatch hl.dsp.cursor.move({{ x = {}, y = {} }})", pos.x, pos.y)) == "ok";
 }
 
 static bool button(bool pressed) {
     return getFromSocket(std::format("/eval hl.plugin.test.click(272, {})", pressed ? 1 : 0)) == "ok";
-}
-
-// A press, some motion, then a release — the gesture as a user performs it. The
-// motion has to arrive in steps: the reorder is driven by the pointer crossing tab
-// boundaries, so a single jump would exercise nothing in between.
-static void dragAlongBar(int fromX, int toX, int steps = 12) {
-    moveCursor(fromX, BAR_MID_Y);
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    button(true);
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
-    for (int i = 1; i <= steps; ++i) {
-        moveCursor(fromX + (toX - fromX) * i / steps, BAR_MID_Y);
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-
-    button(false);
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
 }
 
 // "\tclass: kitty_A\n" -> "kitty_A"
@@ -72,11 +79,29 @@ static std::string classOf(const std::string& activeWindow) {
     return activeWindow.substr(START, END == std::string::npos ? END : END - START);
 }
 
+// A press, some motion, then a release — the gesture as a user performs it. The motion
+// has to arrive in steps: the reorder is driven by the pointer crossing tab
+// boundaries, so a single jump would exercise nothing in between.
+static void dragAlongBar(const SPoint& from, const SPoint& to, int steps = 12) {
+    moveCursor(from);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    button(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    for (int i = 1; i <= steps; ++i) {
+        moveCursor(SPoint{.x = from.x + (to.x - from.x) * i / steps, .y = from.y + (to.y - from.y) * i / steps});
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    button(false);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+}
+
 // Reads back which window occupies a slot, by clicking that tab and asking what is
-// focused. Uses only behaviour that already existed before tab dragging, so a
-// failure here cannot be the assertion itself being wrong.
-static std::string classInSlot(int index) {
-    moveCursor(tabMidX(index), BAR_MID_Y);
+// focused. Uses only behaviour that already existed before tab dragging, so a failure
+// here cannot be the assertion itself being wrong.
+static std::string classInSlot(const SBarLayout& layout, int index) {
+    moveCursor(tabMid(layout, index));
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     button(true);
     button(false);
@@ -84,14 +109,20 @@ static std::string classInSlot(int index) {
     return classOf(getFromSocket("/activewindow"));
 }
 
+static std::string applyGroupbarConfig(bool stacked, bool dragTabs) {
+    const auto RESULT = getFromSocket(std::format("/eval hl.config({{ group = {{ auto_group = false, groupbar = {{ enabled = true, drag_tabs = {}, stacked = {}, "
+                                                  "render_titles = true, gradients = false, height = 20, indicator_height = 3, indicator_gap = 0, gaps_in = 2, "
+                                                  "gaps_out = 2, keep_upper_gap = true }} }} }})",
+                                                  dragTabs ? "true" : "false", stacked ? "true" : "false"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    return RESULT;
+}
+
 TEST_CASE(groupbar_tab_drag) {
     NLog::log("{}Dispatching workspace `groupbar_tab_drag`", Colors::YELLOW);
     getFromSocket("/dispatch hl.dsp.focus({ workspace = 'name:groupbar_tab_drag' })");
 
-    // Pin the groupbar geometry the constants above assume, and make sure the
-    // feature under test is on.
-    OK(getFromSocket("/eval hl.config({ group = { auto_group = false, groupbar = { enabled = true, drag_tabs = true, stacked = false, render_titles = true, "
-                     "gradients = false, height = 20, indicator_height = 3, indicator_gap = 0, gaps_in = 2, gaps_out = 2, keep_upper_gap = true } } })"));
+    OK(applyGroupbarConfig(false, true));
 
     auto kittyA = Tests::spawnKitty("kitty_A");
     auto kittyB = Tests::spawnKitty("kitty_B");
@@ -108,44 +139,47 @@ TEST_CASE(groupbar_tab_drag) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
-    // The tab coordinates are derived, not measured, so check the assumption rather
-    // than silently clicking the wrong pixels if the layout ever changes.
-    NLog::log("{}Check the group's geometry matches what the tab maths assumes", Colors::YELLOW);
-    {
-        const auto STR = getFromSocket("/clients");
-        EXPECT_COUNT_STRING(STR, std::format("at: {},{}", BAR_X, BAR_Y + BAR_H), TAB_COUNT);
+    // The two orientations index tabs along different axes, so both are exercised.
+    for (const auto& LAYOUT : {HORIZONTAL, STACKED}) {
+        NLog::log("{}Tab dragging, {} bar", Colors::YELLOW, LAYOUT.name);
+        OK(applyGroupbarConfig(LAYOUT.stacked, true));
+
+        // The tab coordinates are derived, not measured, so check the assumption
+        // rather than silently clicking the wrong pixels if the layout ever changes.
+        EXPECT_COUNT_STRING(getFromSocket("/clients"), std::format("at: {},{}", BAR_X, BAR_Y + LAYOUT.reserved), TAB_COUNT);
+
+        const std::string SLOT0_BEFORE = classInSlot(LAYOUT, 0);
+        EXPECT_NOT(SLOT0_BEFORE, "");
+
+        NLog::log("{}Drag the first tab to the last slot", Colors::YELLOW);
+        dragAlongBar(tabMid(LAYOUT, 0), tabMid(LAYOUT, 2));
+        EXPECT(classInSlot(LAYOUT, 2), SLOT0_BEFORE);
+
+        NLog::log("{}Drag it back to the first slot", Colors::YELLOW);
+        dragAlongBar(tabMid(LAYOUT, 2), tabMid(LAYOUT, 0));
+        EXPECT(classInSlot(LAYOUT, 0), SLOT0_BEFORE);
     }
 
-    // Whatever the grouping left behind, put a known window in slot 0 to drag.
-    const std::string SLOT0_BEFORE = classInSlot(0);
-
-    EXPECT_NOT(SLOT0_BEFORE, "");
-
-    NLog::log("{}Drag the first tab to the last slot", Colors::YELLOW);
-    dragAlongBar(tabMidX(0), tabMidX(2));
-    EXPECT(classInSlot(2), SLOT0_BEFORE);
-
-    NLog::log("{}Drag it back to the first slot", Colors::YELLOW);
-    dragAlongBar(tabMidX(2), tabMidX(0));
-    EXPECT(classInSlot(0), SLOT0_BEFORE);
+    // back to a horizontal bar for the remaining cases
+    OK(applyGroupbarConfig(false, true));
 
     NLog::log("{}A click must not reorder", Colors::YELLOW);
     {
-        const auto BEFORE = classInSlot(1);
-        moveCursor(tabMidX(1), BAR_MID_Y);
+        const auto BEFORE = classInSlot(HORIZONTAL, 1);
+        moveCursor(tabMid(HORIZONTAL, 1));
         button(true);
         button(false);
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        EXPECT(classInSlot(1), BEFORE);
+        EXPECT(classInSlot(HORIZONTAL, 1), BEFORE);
     }
 
     NLog::log("{}drag_tabs = false disables the gesture", Colors::YELLOW);
     {
-        OK(getFromSocket("/eval hl.config({ group = { groupbar = { drag_tabs = false } } })"));
-        const auto BEFORE = classInSlot(0);
-        dragAlongBar(tabMidX(0), tabMidX(2));
-        EXPECT(classInSlot(0), BEFORE);
-        OK(getFromSocket("/eval hl.config({ group = { groupbar = { drag_tabs = true } } })"));
+        OK(applyGroupbarConfig(false, false));
+        const auto BEFORE = classInSlot(HORIZONTAL, 0);
+        dragAlongBar(tabMid(HORIZONTAL, 0), tabMid(HORIZONTAL, 2));
+        EXPECT(classInSlot(HORIZONTAL, 0), BEFORE);
+        OK(applyGroupbarConfig(false, true));
     }
 
     // cleanup
