@@ -66,11 +66,19 @@ class IHyprWindowDecoration {
     // Only one grab exists at a time, because the pointer is a singleton. The grab is
     // dropped automatically if the holding decoration is destroyed, which a window
     // closing mid-gesture would otherwise turn into a dangling pointer.
-    void                          grabPointer();
-    void                          ungrabPointer();
-    bool                          hasPointerGrab() const;
+    void     grabPointer(uint32_t button);
+    void     ungrabPointer();
+    bool     hasPointerGrab() const;
+    uint32_t pointerGrabButton() const;
+
+    // Called when the grab is taken away rather than ended by a release — the
+    // compositor force-releases held buttons on things like a workspace change, and
+    // a gesture that kept running after that would be acting on a button nobody is
+    // holding.
+    virtual void                  onPointerGrabCancelled();
 
     static IHyprWindowDecoration* pointerGrab();
+    static void                   cancelPointerGrab();
 
   private:
     PHLWINDOWREF m_window;

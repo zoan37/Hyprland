@@ -397,6 +397,32 @@ void CGroup::swapWithNext() {
         Desktop::focusState()->fullWindowFocus(m_windows.at(m_current).lock(), FOCUS_REASON_DESKTOP_STATE_CHANGE);
 }
 
+// Moves the current window to an arbitrary index, keeping the order of the others.
+// Equivalent to repeated swapWithNext/swapWithLast, but refreshes visibility and
+// focus once instead of once per slot crossed — updateWindowVisibility walks the
+// whole group and triggers a recalc, so doing it per step turns a single pointer
+// motion into O(n^2) work.
+void CGroup::moveCurrentToIndex(size_t idx) {
+    if (m_windows.size() < 2)
+        return;
+
+    idx = std::clamp(idx, sc<size_t>(0), m_windows.size() - 1);
+    if (idx == m_current)
+        return;
+
+    const bool HAD_FOCUS = Desktop::focusState()->window() == m_windows.at(m_current);
+    const auto WINDOW    = m_windows.at(m_current);
+
+    m_windows.erase(m_windows.begin() + m_current);
+    m_windows.insert(m_windows.begin() + idx, WINDOW);
+    m_current = idx;
+
+    updateWindowVisibility();
+
+    if (HAD_FOCUS)
+        Desktop::focusState()->fullWindowFocus(m_windows.at(m_current).lock(), FOCUS_REASON_DESKTOP_STATE_CHANGE);
+}
+
 void CGroup::swapWithLast() {
     const bool HAD_FOCUS = Desktop::focusState()->window() == m_windows.at(m_current);
 

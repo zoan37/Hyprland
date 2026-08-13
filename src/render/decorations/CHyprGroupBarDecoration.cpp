@@ -34,37 +34,35 @@ constexpr uint32_t BTN_LEFT_CODE = 272;
 // itself, so the snapshot stays valid for the whole gesture and the handlers below
 // need no access to any decoration instance.
 
-namespace {
-    struct STabDragState {
-        PHLWINDOWREF window;         // the tab being dragged
-        Vector2D     pressPos;       // where the press landed, for the threshold
-        CBox         barBox;         // the bar, in global coords
-        Vector2D     pointer;        // latest pointer position, for drawing the tab under it
-        double       grabOffset = 0; // where inside the tab the press landed, so it does not jump
-        float        barWidth   = 0;
-        float        barHeight  = 0;
-        int          gapsIn     = 0;
-        int          gapsOut    = 0;
-        bool         stacked    = false;
-        bool         armed      = false;
-        bool         active     = false;
-    };
+struct STabDragState {
+    PHLWINDOWREF window;         // the tab being dragged
+    Vector2D     pressPos;       // where the press landed, for the threshold
+    CBox         barBox;         // the bar, in global coords
+    Vector2D     pointer;        // latest pointer position, for drawing the tab under it
+    double       grabOffset = 0; // where inside the tab the press landed, so it does not jump
+    float        barWidth   = 0;
+    float        barHeight  = 0;
+    int          gapsIn     = 0;
+    int          gapsOut    = 0;
+    bool         stacked    = false;
+    bool         armed      = false;
+    bool         active     = false;
+};
 
-    STabDragState g_tabDrag;
+static STabDragState g_tabDrag;
 
-    // Enough to not reorder on the jitter of an ordinary click, small enough that a
-    // deliberate drag feels immediate.
-    constexpr double TAB_DRAG_THRESHOLD = 4.0;
+// Enough to not reorder on the jitter of an ordinary click, small enough that a
+// deliberate drag feels immediate.
+static constexpr double TAB_DRAG_THRESHOLD = 4.0;
 
-    // How far off the bar, as a multiple of its thickness, the pointer may stray and
-    // still reorder. Without this, pressing a tab and moving down into the window
-    // would keep reordering on the horizontal component alone, which is a surprising
-    // way to lose your tab order. Straying past the band only pauses the gesture —
-    // coming back resumes it, and nothing is reverted.
-    constexpr double TAB_DRAG_BAND = 3.0;
-}
+// How far off the bar, as a multiple of its thickness, the pointer may stray and
+// still reorder. Without this, pressing a tab and moving down into the window would
+// keep reordering on the horizontal component alone, which is a surprising way to
+// lose your tab order. Straying past the band only pauses the gesture — coming back
+// resumes it, and nothing is reverted.
+static constexpr double TAB_DRAG_BAND = 3.0;
 
-bool CHyprGroupBarDecoration::tabDragArmed() {
+bool                    CHyprGroupBarDecoration::tabDragArmed() {
     return g_tabDrag.armed && !g_tabDrag.window.expired();
 }
 
@@ -82,6 +80,10 @@ void CHyprGroupBarDecoration::endTabDrag() {
         GRAB->ungrabPointer();
 
     g_tabDrag = STabDragState{};
+}
+
+void CHyprGroupBarDecoration::onPointerGrabCancelled() {
+    endTabDrag();
 }
 
 void CHyprGroupBarDecoration::armTabDrag(const Vector2D& pos, PHLWINDOW dragged) {
@@ -105,9 +107,16 @@ void CHyprGroupBarDecoration::armTabDrag(const Vector2D& pos, PHLWINDOW dragged)
     g_tabDrag.stacked   = *PSTACKED;
     g_tabDrag.armed     = true;
 
-    // From here the gesture owns the pointer: motion and the release come to this
-    // decoration even once the cursor has left the bar.
-    grabPointer();
+    // The grab goes on the dragged tab's own decoration, not on `this`: `this`
+    // belongs to whichever window was current before the press, and if that window
+    // closed mid-gesture its destructor would drop the grab and strand the drag.
+    const auto DECO = dragged->getDecorationByType(DECORATION_GROUPBAR);
+    if (!DECO) {
+        g_tabDrag = STabDragState{};
+        return;
+    }
+
+    DECO->grabPointer(BTN_LEFT_CODE);
 
     // Where inside the grabbed tab the press landed. Drawing the tab at
     // pointer - grabOffset keeps it under the same point of the cursor for the whole
@@ -185,21 +194,10 @@ void CHyprGroupBarDecoration::updateTabDrag(const Vector2D& pos) {
     if (GROUP->current() != WINDOW)
         GROUP->setCurrent(WINDOW);
 
-    size_t idx = GROUP->getCurrentIdx();
-    if (idx == TARGET)
+    if (GROUP->getCurrentIdx() == TARGET)
         return;
 
-    // Bounded: each step moves one slot toward the target, and neither helper wraps
-    // while the target is on the side we are walking toward.
-    for (size_t guard = 0; idx != TARGET && guard < SIZE; ++guard) {
-        if (idx < TARGET) {
-            GROUP->swapWithNext();
-            ++idx;
-        } else {
-            GROUP->swapWithLast();
-            --idx;
-        }
-    }
+    GROUP->moveCurrentToIndex(TARGET);
 
     g_pHyprRenderer->damageBox(g_tabDrag.barBox);
 }

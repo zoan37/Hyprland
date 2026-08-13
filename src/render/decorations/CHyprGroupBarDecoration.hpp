@@ -48,6 +48,8 @@ class CHyprGroupBarDecoration : public IHyprWindowDecoration {
 
     virtual std::string                getDisplayName();
 
+    virtual void                       onPointerGrabCancelled();
+
     // A tab being dragged is drawn under the cursor rather than in its slot, so it
     // slides continuously instead of jumping a slot at a time. Fills `outAlong` with
     // its position along the bar, measured from the bar's origin, and returns false

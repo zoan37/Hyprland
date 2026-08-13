@@ -862,15 +862,6 @@ void CInputManager::setClickMode(eClickBehaviorMode mode) {
 
 void CInputManager::processMouseDownNormal(const IPointer::SButtonEvent& e, SP<IPointer> mouse) {
 
-    // A decoration holding the pointer grab gets the release wherever it lands; by
-    // now the pointer may be nowhere near the decoration, so checkInputOnDecos below
-    // would never reach it. If it consumes the event its gesture ended here and
-    // nothing else should act on the release.
-    if (const auto GRAB = IHyprWindowDecoration::pointerGrab(); GRAB && e.state == WL_POINTER_BUTTON_STATE_RELEASED) {
-        if (GRAB->onInputOnDeco(INPUT_TYPE_BUTTON, g_pInputManager->getMouseCoordsInternal(), e))
-            return;
-    }
-
     // notify the keybind manager
     static auto PPASSMOUSE        = CConfigValue<Config::INTEGER>("binds:pass_mouse_when_bound");
     const auto  PASS              = g_pKeybindManager->onMouseEvent(e, mouse);
@@ -879,6 +870,16 @@ void CInputManager::processMouseDownNormal(const IPointer::SButtonEvent& e, SP<I
     static auto PBORDERSIZE       = CConfigValue<Config::INTEGER>("general:border_size");
     static auto PBORDERGRABEXTEND = CConfigValue<Config::INTEGER>("general:extend_border_grab_area");
     const auto  BORDER_GRAB_AREA  = *PRESIZEONBORDER ? *PBORDERSIZE + *PBORDERGRABEXTEND : 0;
+
+    // A decoration holding the pointer grab gets the release wherever it lands; by
+    // now the pointer may be nowhere near it, so checkInputOnDecos below would never
+    // reach it. Only the button that opened the grab is routed this way. If the
+    // decoration consumes it, its gesture ended here and nothing else should act.
+    // Sits ahead of the pass_mouse_when_bound return: a bind matching the release
+    // mid-gesture must not leave the grab held with no button behind it.
+    if (const auto GRAB = IHyprWindowDecoration::pointerGrab(); GRAB && e.state == WL_POINTER_BUTTON_STATE_RELEASED && e.button == GRAB->pointerGrabButton() &&
+        GRAB->onInputOnDeco(INPUT_TYPE_BUTTON, g_pInputManager->getMouseCoordsInternal(), e))
+        return;
 
     if (!PASS && !*PPASSMOUSE)
         return;
@@ -2143,6 +2144,10 @@ void CInputManager::releaseAllMouseButtons() {
 
     if (PROTO::data->dndActive())
         return;
+
+    // Whatever gesture a decoration was running is over: the button it is waiting on
+    // is about to be released without it ever seeing the event.
+    IHyprWindowDecoration::cancelPointerGrab();
 
     for (auto const& mb : buttonsCopy) {
         g_pSeatManager->sendPointerButton(Time::millis(Time::steadyNow()), mb, WL_POINTER_BUTTON_STATE_RELEASED);
