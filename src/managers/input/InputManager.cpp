@@ -934,13 +934,14 @@ void CInputManager::processMouseDownNormal(const IPointer::SButtonEvent& e, SP<I
     const auto w           = Desktop::viewState()->hitTest().windowAt(mouseCoords, Desktop::View::ALLOW_FLOATING | Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS);
 
     if (w && !m_lastFocusOnLS && !g_pSessionLockManager->isSessionLocked()) {
-        const auto GRAB_BEFORE = IHyprWindowDecoration::pointerGrab();
+        const auto GEN_BEFORE = IHyprWindowDecoration::pointerGrabGeneration();
         if (w->checkInputOnDecos(INPUT_TYPE_BUTTON, mouseCoords, e)) {
             // A press that took the grab needs its device attached: the button event
-            // carries no pointer, so the decoration cannot do this itself. Only a grab
-            // this press created is bound, so an unrelated handled press cannot rebind
-            // one already in progress.
-            if (const auto GRAB = IHyprWindowDecoration::pointerGrab(); GRAB && GRAB != GRAB_BEFORE)
+            // carries no pointer, so the decoration cannot do this itself. Keyed on the
+            // acquisition generation rather than the holder, so that the same
+            // decoration re-arming is still recognised as a new grab, while an
+            // unrelated handled press cannot rebind one already in progress.
+            if (const auto GRAB = IHyprWindowDecoration::pointerGrab(); GRAB && IHyprWindowDecoration::pointerGrabGeneration() != GEN_BEFORE)
                 GRAB->bindPointerGrabDevice(mouse);
 
             return;

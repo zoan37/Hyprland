@@ -7,6 +7,11 @@ static IHyprWindowDecoration* g_pointerGrab       = nullptr;
 static uint32_t               g_pointerGrabButton = 0;
 static WP<IPointer>           g_pointerGrabDevice;
 
+// Bumped by every acquisition. The input manager binds the device by watching this
+// rather than the holder address: the same decoration re-arming is a new grab, with
+// its device reset, and an address comparison cannot see that.
+static uint64_t g_pointerGrabGeneration = 0;
+
 IHyprWindowDecoration::IHyprWindowDecoration(PHLWINDOW pWindow) : m_window(pWindow) {
     ;
 }
@@ -17,13 +22,20 @@ IHyprWindowDecoration::~IHyprWindowDecoration() {
 
 void IHyprWindowDecoration::grabPointer(uint32_t button) {
     // A second grab must not silently strand the first: its owner would keep gesture
-    // state with nothing able to end it, having lost the grab it ends through.
-    if (g_pointerGrab && g_pointerGrab != this)
+    // state with nothing able to end it, having lost the grab it ends through. This
+    // includes re-arming on the decoration already holding it — that is a new
+    // gesture, and the old one still has to repaint where it left its tab.
+    if (g_pointerGrab)
         cancelPointerGrab();
 
     g_pointerGrab       = this;
     g_pointerGrabButton = button;
     g_pointerGrabDevice.reset();
+    ++g_pointerGrabGeneration;
+}
+
+uint64_t IHyprWindowDecoration::pointerGrabGeneration() {
+    return g_pointerGrabGeneration;
 }
 
 void IHyprWindowDecoration::bindPointerGrabDevice(const WP<IPointer>& pointer) {

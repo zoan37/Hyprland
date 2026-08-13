@@ -75,8 +75,9 @@ class IHyprWindowDecoration {
     bool hasPointerGrab() const;
 
     // True when an event from this device and button belongs to the current grab.
-    static bool pointerGrabWants(uint32_t button, const SP<IPointer>& from);
-    static bool pointerGrabHeldBy(const SP<IPointer>& pointer);
+    static uint64_t pointerGrabGeneration();
+    static bool     pointerGrabWants(uint32_t button, const SP<IPointer>& from);
+    static bool     pointerGrabHeldBy(const SP<IPointer>& pointer);
 
     // Called when the grab is taken away rather than ended by a release — the
     // compositor force-releases held buttons on things like a workspace change, and

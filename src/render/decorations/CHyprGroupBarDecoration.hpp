@@ -50,11 +50,6 @@ class CHyprGroupBarDecoration : public IHyprWindowDecoration {
 
     virtual void                       onPointerGrabCancelled();
 
-    // A tab being dragged is drawn under the cursor rather than in its slot, so it
-    // slides continuously instead of jumping a slot at a time. Fills `outAlong` with
-    // its position along the bar, measured from the bar's origin, and returns false
-    // for every tab that is not the one being dragged.
-
   private:
     // Modifier-free tab dragging, in the spirit of general:resize_on_border: press a
     // tab and drag it along the bar to reorder the group, no keybind involved. The
@@ -70,7 +65,11 @@ class CHyprGroupBarDecoration : public IHyprWindowDecoration {
     // armed  : a press on a tab is being tracked
     // active : the pointer has since moved past the threshold, so it is a drag and
     //          not a click
-    static double             tabStep(const CBox& barBox, size_t count);
+    static double tabStep(const CBox& barBox, size_t count);
+    // On a horizontal bar the dragged tab is drawn under the cursor rather than in
+    // its slot, so it slides instead of jumping a slot at a time. Fills `outAlong`
+    // with its position along the bar and returns false for every other tab, and for
+    // stacked bars, which keep the snap behaviour.
     static bool               draggedTabAlong(PHLWINDOW w, const CBox& barBox, double tabLen, double& outAlong);
     static bool               tabDragArmed();
     static bool               tabDragActive();

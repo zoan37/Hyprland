@@ -202,6 +202,29 @@ TEST_CASE(groupbar_tab_drag) {
         EXPECT(classInSlot(HORIZONTAL, 1), BEFORE);
     }
 
+    // The press is consumed by the decoration, so its release must be too, even when
+    // the pointer has left the decoration without ever becoming a drag. This exercises
+    // that path but cannot assert it: proving the client saw no button-up needs a
+    // client that counts them, and the group here is made of kitties. The order check
+    // would pass either way — it is a smoke test, not a proof.
+    NLog::log("{}Sub-threshold release outside the decoration", Colors::YELLOW);
+    {
+        const auto   BEFORE = classInSlot(HORIZONTAL, 1);
+        const auto   MID    = tabMid(HORIZONTAL, 1);
+        const SPoint EDGE{.x = MID.x, .y = BAR_Y + H_RESERVED - 1}; // last row inside the bar
+
+        moveCursor(EDGE);
+        button(true);
+        for (int i = 1; i <= 3; ++i) {
+            moveCursor(SPoint{.x = EDGE.x, .y = EDGE.y + i}); // 3px down, below threshold, past the bar
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        button(false);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        EXPECT(classInSlot(HORIZONTAL, 1), BEFORE);
+    }
+
     NLog::log("{}drag_tabs = false disables the gesture", Colors::YELLOW);
     {
         OK(applyGroupbarConfig(false, false));

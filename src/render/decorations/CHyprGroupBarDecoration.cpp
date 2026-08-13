@@ -114,22 +114,24 @@ void CHyprGroupBarDecoration::armTabDrag(const Vector2D& pos, PHLWINDOW dragged)
     if (g_layoutManager->dragController()->target())
         return;
 
+    // The grab goes on the dragged tab's own decoration, not on `this`: `this`
+    // belongs to whichever window was current before the press, and if that window
+    // closed mid-gesture its destructor would drop the grab and strand the drag.
+    const auto DECO = dragged->getDecorationByType(DECORATION_GROUPBAR);
+    if (!DECO)
+        return;
+
+    // Taken before any state is written. grabPointer cancels a previous holder, and
+    // that cancellation runs endTabDrag — which would wipe state written first. A
+    // groupbar already holding the grab is this same gesture re-arming, and clearing
+    // its state below is what we want anyway.
+    DECO->grabPointer(BTN_LEFT_CODE);
+
     g_tabDrag          = STabDragState{};
     g_tabDrag.window   = dragged;
     g_tabDrag.pressPos = pos;
     g_tabDrag.pointer  = pos;
     g_tabDrag.armed    = true;
-
-    // The grab goes on the dragged tab's own decoration, not on `this`: `this`
-    // belongs to whichever window was current before the press, and if that window
-    // closed mid-gesture its destructor would drop the grab and strand the drag.
-    const auto DECO = dragged->getDecorationByType(DECORATION_GROUPBAR);
-    if (!DECO) {
-        g_tabDrag = STabDragState{};
-        return;
-    }
-
-    DECO->grabPointer(BTN_LEFT_CODE);
 
     // Where inside the grabbed tab the press landed. Drawing the tab at
     // pointer - grabOffset keeps it under the same point of the cursor for the whole
@@ -173,8 +175,7 @@ bool CHyprGroupBarDecoration::draggedTabAlong(PHLWINDOW w, const CBox& barBox, d
 }
 
 void CHyprGroupBarDecoration::updateTabDrag(const Vector2D& pos) {
-    static auto PSTACKED  = CConfigValue<Config::INTEGER>("group:groupbar:stacked");
-    static auto PINNERGAP = CConfigValue<Config::INTEGER>("group:groupbar:gaps_in");
+    static auto PSTACKED = CConfigValue<Config::INTEGER>("group:groupbar:stacked");
 
     if (!tabDragArmed()) {
         // Nothing is being dragged any more — most likely the window went away
@@ -684,14 +685,16 @@ bool CHyprGroupBarDecoration::onMouseButtonOnDeco(const Vector2D& pos, const IPo
     static auto PINNERGAP         = CConfigValue<Config::INTEGER>("group:groupbar:gaps_in");
     static auto PMIDDLECLICKCLOSE = CConfigValue<Config::INTEGER>("group:groupbar:middle_click_close");
 
-    // The release that ends a tab drag. It arrives here through the pointer grab, so
-    // it reaches us wherever the pointer ended up. A press that never passed the
-    // threshold was a click, not a drag, so it is not consumed and falls through to
-    // the normal handling below.
+    // The release that ends the gesture. It arrives through the pointer grab, so it
+    // reaches us wherever the pointer ended up, and it is always consumed — whether
+    // or not the press ever became a drag. We consumed the press that opened this
+    // grab, so the client never saw a button-down, and letting the release through
+    // would hand it an unmatched button-up. That is reachable without any drag: press
+    // near a tab edge, move less than the threshold but out of the decoration, and
+    // the hit test below can no longer consume it.
     if (e.button == BTN_LEFT_CODE && e.state == WL_POINTER_BUTTON_STATE_RELEASED && hasPointerGrab()) {
-        const bool WAS_DRAG = tabDragActive();
         endTabDrag();
-        return WAS_DRAG;
+        return true;
     }
 
     if (Fullscreen::controller()->getFullscreenModes(m_window.lock()).internal == Fullscreen::FSMODE_FULLSCREEN)
