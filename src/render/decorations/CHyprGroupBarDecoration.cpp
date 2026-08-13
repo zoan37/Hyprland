@@ -39,6 +39,8 @@ namespace {
         PHLWINDOWREF window;      // the tab being dragged
         Vector2D     pressPos;    // where the press landed, for the threshold
         CBox         barBox;      // the bar, in global coords
+        Vector2D     pointer;     // latest pointer position, for drawing the tab under it
+        double       grabOffset = 0; // where inside the tab the press landed, so it does not jump
         float        barWidth  = 0;
         float        barHeight = 0;
         int          gapsIn    = 0;
@@ -89,6 +91,7 @@ void CHyprGroupBarDecoration::armTabDrag(const Vector2D& pos, PHLWINDOW dragged)
     g_tabDrag           = STabDragState{};
     g_tabDrag.window    = dragged;
     g_tabDrag.pressPos  = pos;
+    g_tabDrag.pointer   = pos;
     g_tabDrag.barBox    = assignedBoxGlobal();
     g_tabDrag.barWidth  = m_barWidth;
     g_tabDrag.barHeight = m_barHeight;
@@ -96,6 +99,25 @@ void CHyprGroupBarDecoration::armTabDrag(const Vector2D& pos, PHLWINDOW dragged)
     g_tabDrag.gapsOut   = *POUTERGAP;
     g_tabDrag.stacked   = *PSTACKED;
     g_tabDrag.armed     = true;
+
+    // Where inside the grabbed tab the press landed. Drawing the tab at
+    // pointer - grabOffset keeps it under the same point of the cursor for the whole
+    // gesture, instead of snapping its edge to the pointer on the first motion.
+    const double STEP     = *PSTACKED ? m_barHeight + *POUTERGAP : m_barWidth + *PINNERGAP;
+    const double RELATIVE = *PSTACKED ? pos.y - g_tabDrag.barBox.y : pos.x - g_tabDrag.barBox.x;
+    if (STEP > 0 && RELATIVE >= 0)
+        g_tabDrag.grabOffset = RELATIVE - sc<int>(RELATIVE / STEP) * STEP;
+}
+
+bool CHyprGroupBarDecoration::draggedTabAlong(PHLWINDOW w, double barLen, double tabLen, double& outAlong) {
+    // Stacked bars keep the old snap behaviour: the arithmetic differs and it is not
+    // covered by any test.
+    if (!tabDragActive() || g_tabDrag.stacked || !w || g_tabDrag.window.lock() != w)
+        return false;
+
+    const double DESIRED = (g_tabDrag.pointer.x - g_tabDrag.grabOffset) - g_tabDrag.barBox.x;
+    outAlong             = std::clamp(DESIRED, 0.0, std::max(0.0, barLen - tabLen));
+    return true;
 }
 
 void CHyprGroupBarDecoration::updateTabDrag(const Vector2D& pos) {
@@ -114,6 +136,11 @@ void CHyprGroupBarDecoration::updateTabDrag(const Vector2D& pos) {
 
         g_tabDrag.active = true;
     }
+
+    // The tab is drawn under the cursor, so every motion has to redraw the bar, not
+    // just the ones that change the order.
+    g_tabDrag.pointer = pos;
+    g_pHyprRenderer->damageBox(g_tabDrag.barBox);
 
     const auto   GROUP = WINDOW->m_group;
     const size_t SIZE  = GROUP->size();
@@ -295,7 +322,15 @@ void CHyprGroupBarDecoration::draw(PHLMONITOR pMonitor, float const& a) {
     for (int i = 0; i < barsToDraw; ++i) {
         const auto WINDOWINDEX = *PSTACKED ? m_dwGroupMembers.size() - i - 1 : i;
 
-        CBox       rect = {ASSIGNEDBOX.x + xoff - pMonitor->m_position.x + m_window->m_floatingOffset.x,
+        // A tab being dragged is drawn wherever the cursor is rather than in its
+        // slot, so it slides with the pointer while the others hold their places.
+        // Only the drawing offset changes; the slot arithmetic below is untouched.
+        float      xoffDraw = xoff;
+        double     dragAlong;
+        if (draggedTabAlong(m_dwGroupMembers[WINDOWINDEX].lock(), ASSIGNEDBOX.w, m_barWidth, dragAlong))
+            xoffDraw = dragAlong;
+
+        CBox       rect = {ASSIGNEDBOX.x + xoffDraw - pMonitor->m_position.x + m_window->m_floatingOffset.x,
                            ASSIGNEDBOX.y + ASSIGNEDBOX.h - floor(yoff) - *PINDICATORHEIGHT - *POUTERGAP - pMonitor->m_position.y + m_window->m_floatingOffset.y, m_barWidth,
                            *PINDICATORHEIGHT};
 
@@ -333,7 +368,7 @@ void CHyprGroupBarDecoration::draw(PHLMONITOR pMonitor, float const& a) {
             g_pHyprRenderer->addPassElement(makeUnique<CRectPassElement>(rectdata));
         }
 
-        rect = {ASSIGNEDBOX.x + xoff - pMonitor->m_position.x + m_window->m_floatingOffset.x,
+        rect = {ASSIGNEDBOX.x + xoffDraw - pMonitor->m_position.x + m_window->m_floatingOffset.x,
                 ASSIGNEDBOX.y + ASSIGNEDBOX.h - floor(yoff) - ONEBARHEIGHT - pMonitor->m_position.y + m_window->m_floatingOffset.y, m_barWidth,
                 (*PGRADIENTS || *PRENDERTITLES ? *PHEIGHT : 0)};
         rect.scale(pMonitor->m_scale);

@@ -74,6 +74,13 @@ decoration, so the two gestures cannot both arm.
   decoration, because by then the pointer may have left the bar and the
   decoration would never see the event. A release that ended a real drag is
   swallowed; a release that was only ever a click falls through.
+- **Sliding.** `draw()` positions every tab from a running `xoff`; the grabbed tab
+  is instead drawn at `pointer - grabOffset`, clamped to the bar, so it follows
+  the cursor continuously rather than jumping a slot at a time. Only the drawing
+  offset changes — the slot arithmetic and the group order are untouched, so what
+  is drawn and what is stored cannot diverge. `grabOffset` is where inside the tab
+  the press landed, which stops the tab snapping its edge to the cursor on the
+  first motion. Every motion damages the bar, not just the ones that reorder.
 
 ### Files
 
@@ -119,10 +126,13 @@ upstream submission; that harness can already synthesise clicks via
 - **Tear-off.** Dragging a tab off the bar does not detach the window into a
   floating drag the way Chrome does; the gesture just pauses. Tear-off still
   works the old way, with SUPER+drag, which this branch leaves alone.
-- **Smooth motion.** The tab jumps a slot at a time rather than sliding under the
-  cursor with the others parting around it.
-- **Stacked bars** (`groupbar:stacked`) are handled in the arithmetic — the
-  off-axis and along-axis roles swap — but were not tested.
+- **The other tabs snap.** The grabbed tab slides continuously, but the tabs it
+  displaces jump straight to their new slots instead of animating aside the way
+  Chrome's do. Doing that properly means giving each tab an animated offset
+  rather than deriving its position from its index every frame.
+- **Stacked bars** (`groupbar:stacked`) are handled in the reordering arithmetic —
+  the off-axis and along-axis roles swap — but were not tested, and the grabbed
+  tab does not slide there; it keeps the snap behaviour.
 
 ## Relationship to the other branch
 

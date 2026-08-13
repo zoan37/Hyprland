@@ -64,6 +64,12 @@ class CHyprGroupBarDecoration : public IHyprWindowDecoration {
     static void updateTabDrag(const Vector2D& pos);
     static void endTabDrag();
 
+    // While a tab is being dragged it is drawn under the cursor rather than in its
+    // slot, so it slides continuously instead of jumping a slot at a time. Fills
+    // `outAlong` with its position along the bar, measured from the bar's origin,
+    // and returns false for every tab that is not the one being dragged.
+    static bool draggedTabAlong(PHLWINDOW w, double barLen, double tabLen, double& outAlong);
+
   private:
     CBox                      m_assignedBox = {0};
 
